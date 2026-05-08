@@ -27,6 +27,13 @@ dependencies = [
     "pydantic-settings>=2.6",
 ]
 
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.15",
@@ -40,7 +47,7 @@ dev = [
 # ── Taskipy ───────────────────────────────────────────────────────
 
 [tool.taskipy.tasks]
-start = "uvicorn proovy_agent.api.main:app --reload"
+start = "uvicorn proovy_agent.app.main:app --reload"
 lint = "ruff check ."
 format = "ruff format ."
 test = "pytest"
