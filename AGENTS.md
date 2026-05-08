@@ -46,7 +46,7 @@ uv run pytest         # 테스트
 
 브랜치명은 `type/이슈번호-간단한설명` 형식을 사용합니다.
 
-```
+```text
 feat/7-core-solver
 fix/12-credit-calculation
 chore/1-project-init-setting
