@@ -1,0 +1,96 @@
+[project]
+name = "proovy-agent"
+version = "0.1.0"
+description = "Math problem solving agent powered by LangGraph + OpenRouter"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # ── Agent Framework ───────────────────────────────────────────
+    "langchain>=1.0",                      # create_agent, middleware
+    "langgraph>=1.1",                      # Command API, Send API, StateGraph
+    "langchain-openrouter>=0.2",           # ChatOpenRouter (공식 1st-party)
+
+    # ── Checkpointing ─────────────────────────────────────────────
+    "langgraph-checkpoint-postgres>=3.0",  # AsyncPostgresSaver
+    "psycopg[binary]>=3.2",               # async postgres driver
+
+    # ── API Layer ─────────────────────────────────────────────────
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",                  # SSE 이벤트 스트리밍
+
+    # ── Sandbox ───────────────────────────────────────────────────
+    "daytona>=0.158",                      # from daytona import AsyncDaytona
+
+    # ── Config & Validation ───────────────────────────────────────
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",   # FastAPI TestClient / async 테스트용
+    "taskipy>=1.14",  # 작업 실행 자동화 (uv run task <name>)
+]
+
+# ── Taskipy ───────────────────────────────────────────────────────
+
+[tool.taskipy.tasks]
+start = "uvicorn proovy_agent.app.main:app --reload"
+lint = "ruff check ."
+format = "ruff format ."
+test = "pytest"
+check = "task lint && task test"
+
+# ── Ruff ──────────────────────────────────────────────────────────
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes (미사용 import, 미정의 변수)
+    "I",      # isort (import 정렬)
+    "B",      # flake8-bugbear (흔한 버그 패턴)
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade (최신 Python 문법 강제)
+    "N",      # pep8-naming
+    "RUF",    # Ruff-specific rules
+    "SIM",    # flake8-simplify
+    "ASYNC",  # flake8-async (async 함수 내 blocking call 감지)
+    "TCH",    # flake8-type-checking
+]
+ignore = [
+    "E501",   # line too long → formatter가 처리
+    "B008",   # function call in default args → FastAPI Depends(...) 패턴 허용
+    "SIM108", # ternary operator 강제 → if-else 가독성 허용
+]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["proovy_agent"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ── Pytest ────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
