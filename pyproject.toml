@@ -25,6 +25,9 @@ dependencies = [
     # ── Config & Validation ───────────────────────────────────────
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+
+    # ── Template Rendering ────────────────────────────────────────
+    "jinja2>=3.0",
 ]
 
 [build-system]

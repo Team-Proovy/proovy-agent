@@ -27,7 +27,7 @@
                 {% elif section.content_type == "image" %}
                     <div class="image-content">
                         {{ section.content | escape_newlines | safe }}
-                        {% if section.metadata.image_path %}
+                        {% if section.metadata and section.metadata.image_path %}
                         <div class="image-container">
                             <img src="{{ section.metadata.image_path | image_to_base64 }}" 
                                  alt="해설 그래프" 
@@ -41,7 +41,7 @@
                     </div>
                 {% endif %}
                 
-                {% if section.metadata.source %}
+                {% if section.metadata and section.metadata.source %}
                 <div class="section-source">
                     <small>출처: {{ section.metadata.source }}</small>
                 </div>

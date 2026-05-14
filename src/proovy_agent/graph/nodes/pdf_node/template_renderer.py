@@ -4,6 +4,7 @@ import base64
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import escape
 
 from .exceptions import TemplateRenderingError, handle_pdf_error
 from .models import ContentSection, TemplateData
@@ -86,7 +87,7 @@ class TemplateRenderer:
                 result = []
                 for i, part in enumerate(parts):
                     if i % 2 == 1:  # 코드 블록 내부
-                        result.append(f'<pre><code>{part.strip()}</code></pre>')
+                        result.append(f'<pre><code>{escape(part.strip())}</code></pre>')
                     else:  # 일반 텍스트
                         result.append(part)
                 return "".join(result)
@@ -96,8 +97,33 @@ class TemplateRenderer:
         def image_to_base64(image_path: str) -> str:
             """이미지 파일을 base64로 변환하여 HTML에 임베딩."""
             try:
-                image_file = Path(image_path)
+                image_file = Path(image_path).resolve()
+
+                # 경로 순회 공격 방지: 허용된 디렉토리 내부인지 확인
+                allowed_dirs = [
+                    Path(__file__).parent.parent.parent.parent / "assets",  # assets 폴더
+                    Path("/tmp"),  # 임시 파일
+                    Path.cwd() / "uploads",  # 업로드 폴더
+                ]
+
+                is_safe_path = any(
+                    str(image_file).startswith(str(allowed_dir.resolve()))
+                    for allowed_dir in allowed_dirs
+                    if allowed_dir.exists()
+                )
+
+                if not is_safe_path:
+                    # 안전하지 않은 경로 접근 시도 로깅
+                    print(f"Warning: Unsafe path access attempt: {image_path}")
+                    return ""
+
                 if not image_file.exists():
+                    return ""
+
+                # 파일 크기 제한 (10MB)
+                file_size = image_file.stat().st_size
+                if file_size > 10 * 1024 * 1024:
+                    print(f"Warning: Image file too large: {file_size} bytes")
                     return ""
 
                 with open(image_file, "rb") as f:
@@ -118,10 +144,12 @@ class TemplateRenderer:
                 encoded = base64.b64encode(image_data).decode()
                 return f"data:{mime_type};base64,{encoded}"
 
-            except Exception:
+            except Exception as e:
+                # 로깅 추가로 디버깅 개선
+                print(f"Warning: Image processing failed for {image_path}: {e}")
                 return ""  # 이미지 로드 실패 시 빈 문자열 반환
 
-    async def render_template(self, template_name: str, data: TemplateData) -> str:
+    def render_template(self, template_name: str, data: TemplateData) -> str:
         """템플릿을 렌더링하여 HTML 문자열 반환.
 
         Args:
@@ -200,7 +228,7 @@ class TemplateRenderer:
         """CSS 내용을 HTML style 태그로 래핑."""
         return f"<style>\n{css_content}\n</style>"
 
-    async def render_with_inline_css(
+    def render_with_inline_css(
         self, template_name: str, data: TemplateData, css_file: str = "solution.css"
     ) -> str:
         """템플릿과 CSS를 함께 렌더링하여 인라인 스타일이 포함된 HTML 반환.
@@ -215,7 +243,7 @@ class TemplateRenderer:
         """
         try:
             # HTML 템플릿 렌더링
-            html = await self.render_template(template_name, data)
+            html = self.render_template(template_name, data)
 
             # CSS 파일 로드
             css_path = self.template_dir / "styles" / css_file
