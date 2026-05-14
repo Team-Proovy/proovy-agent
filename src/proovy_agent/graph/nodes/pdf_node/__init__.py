@@ -1,5 +1,6 @@
 """PDF 해설지 생성 노드."""
 
+from .content_parser import ContentParser
 from .exceptions import (
     ContentParsingError,
     FileStorageError,
@@ -19,6 +20,7 @@ from .models import (
 )
 
 __all__ = [
+    "ContentParser",
     "ContentParsingError",
     "ContentSection",
     "FileStorageError",
