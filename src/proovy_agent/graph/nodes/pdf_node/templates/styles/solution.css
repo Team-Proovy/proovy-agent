@@ -1,0 +1,293 @@
+/* PDF 해설지 전용 스타일시트 */
+
+/* === 페이지 설정 === */
+@page {
+    size: A4;
+    margin: 2cm;
+    
+    @top-center {
+        content: "Proovy 수학 해설지";
+        font-size: 10pt;
+        color: #666;
+    }
+    
+    @bottom-right {
+        content: counter(page) " / " counter(pages);
+        font-size: 10pt;
+        color: #666;
+    }
+}
+
+/* === 기본 타이포그래피 === */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Noto Sans KR", "Malgun Gothic", "Apple Gothic", sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #333;
+    background: white;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+/* === 문서 컨테이너 === */
+.document-container {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* === 헤더 === */
+.document-header {
+    border-bottom: 2px solid #2563eb;
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
+    page-break-after: avoid;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.document-title {
+    font-size: 18pt;
+    font-weight: bold;
+    color: #1e40af;
+    margin: 0;
+    flex: 1;
+}
+
+.document-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: 9pt;
+    color: #666;
+    gap: 0.25rem;
+}
+
+/* === 메인 콘텐츠 === */
+.solution-content {
+    min-height: calc(100vh - 6rem);
+}
+
+/* === 해설 섹션 === */
+.solution-section {
+    margin-bottom: 2rem;
+    page-break-inside: avoid;
+}
+
+.solution-section:last-child {
+    margin-bottom: 0;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.section-title {
+    font-size: 14pt;
+    font-weight: 600;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.section-icon {
+    font-size: 16pt;
+    width: 1.5em;
+    text-align: center;
+}
+
+.section-type-label {
+    font-size: 8pt;
+    font-weight: bold;
+    background: #f3f4f6;
+    color: #6b7280;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+}
+
+/* === 섹션 콘텐츠 === */
+.section-content {
+    padding-left: 2rem;
+    font-size: 11pt;
+    line-height: 1.7;
+}
+
+/* 텍스트 콘텐츠 */
+.text-content {
+    color: #374151;
+}
+
+/* 수식 콘텐츠 */
+.math-content {
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    padding: 1rem;
+    font-family: "Times New Roman", "Noto Serif KR", serif;
+    font-size: 12pt;
+    border-radius: 0 0.375rem 0.375rem 0;
+    margin: 0.5rem 0;
+}
+
+/* 코드 콘텐츠 */
+.code-content {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin: 0.5rem 0;
+}
+
+.code-content pre {
+    font-family: "Consolas", "Monaco", "Courier New", monospace;
+    font-size: 10pt;
+    line-height: 1.4;
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.code-content code {
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* 이미지 콘텐츠 */
+.image-content {
+    margin: 1rem 0;
+}
+
+.image-container {
+    text-align: center;
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+}
+
+.solution-image {
+    max-width: 100%;
+    height: auto;
+    max-height: 400px;
+    border-radius: 0.375rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 섹션 출처 */
+.section-source {
+    margin-top: 1rem;
+    font-style: italic;
+    color: #6b7280;
+    font-size: 9pt;
+}
+
+/* === 구분선 === */
+.section-divider {
+    border: none;
+    border-top: 1px dashed #d1d5db;
+    margin: 2rem 0;
+    opacity: 0.6;
+}
+
+/* === 푸터 === */
+.document-footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+    page-break-inside: avoid;
+}
+
+.footer-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 9pt;
+    color: #6b7280;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.generator-info {
+    font-weight: 500;
+}
+
+/* === 빈 콘텐츠 === */
+.no-content {
+    text-align: center;
+    padding: 3rem;
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* === 인쇄 최적화 === */
+@media print {
+    .document-container {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    
+    .solution-section {
+        page-break-inside: avoid;
+    }
+    
+    .section-header {
+        page-break-after: avoid;
+    }
+    
+    /* 링크 색상 조정 */
+    a {
+        color: #000 !important;
+        text-decoration: underline !important;
+    }
+    
+    /* 배경색 인쇄 강제 */
+    .math-content,
+    .code-content,
+    .image-container {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+}
+
+/* === 반응형 조정 (PDF 생성 시에는 적용되지 않지만 브라우저 프리뷰용) === */
+@media (max-width: 768px) {
+    .header-content {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .document-meta {
+        align-items: flex-start;
+    }
+    
+    .footer-content {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .section-content {
+        padding-left: 1rem;
+    }
+}

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<main class="solution-content">
+    {% if sections %}
+        {% for section in sections %}
+        <section class="solution-section" data-type="{{ section.content_type }}" data-order="{{ section.order }}">
+            <header class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">{{ section.content_type | section_icon }}</span>
+                    {{ section.title }}
+                </h2>
+                {% if section.content_type != "text" %}
+                <span class="section-type-label">{{ section.content_type | upper }}</span>
+                {% endif %}
+            </header>
+            
+            <div class="section-content content-{{ section.content_type }}">
+                {% if section.content_type == "math" %}
+                    <div class="math-content">
+                        {{ section.content | format_math | escape_newlines | safe }}
+                    </div>
+                {% elif section.content_type == "code" %}
+                    <div class="code-content">
+                        {{ section.content | format_code_block | safe }}
+                    </div>
+                {% elif section.content_type == "image" %}
+                    <div class="image-content">
+                        {{ section.content | escape_newlines | safe }}
+                        {% if section.metadata and section.metadata.image_path %}
+                        <div class="image-container">
+                            <img src="{{ section.metadata.image_path | image_to_base64 }}" 
+                                 alt="해설 그래프" 
+                                 class="solution-image">
+                        </div>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <div class="text-content">
+                        {{ section.content | escape_newlines | safe }}
+                    </div>
+                {% endif %}
+                
+                {% if section.metadata and section.metadata.source %}
+                <div class="section-source">
+                    <small>출처: {{ section.metadata.source }}</small>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+        
+        {% if not loop.last %}
+        <hr class="section-divider">
+        {% endif %}
+        {% endfor %}
+    {% else %}
+        <div class="no-content">
+            <p>표시할 해설 내용이 없습니다.</p>
+        </div>
+    {% endif %}
+</main>
+{% endblock %}
+
+{% block extra_head %}
+<!-- 수식 렌더링을 위한 추가 메타 태그 (Phase 2에서 MathJax 연동 시 사용) -->
+{% if has_math %}
+<meta name="math-content" content="true">
+{% endif %}
+{% endblock %}
