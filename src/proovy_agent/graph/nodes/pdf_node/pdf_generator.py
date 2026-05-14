@@ -4,6 +4,7 @@ import asyncio
 from io import BytesIO
 from pathlib import Path
 
+from pdf2image import convert_from_bytes
 from weasyprint import CSS, HTML
 
 from .exceptions import PDFGenerationError, handle_pdf_error
@@ -49,6 +50,13 @@ class PDFGenerator:
                 data=template_data,
                 css_file=request.config.css_file,
             )
+
+            # HTML 유효성 검증
+            if not self.validate_html_content(html_content):
+                raise PDFGenerationError(
+                    message="HTML 콘텐츠가 PDF 생성에 적합하지 않습니다",
+                    details={"html_length": len(html_content)}
+                )
 
             # PDF 생성
             pdf_bytes = await self._generate_pdf_bytes(html_content, request.config)
@@ -188,7 +196,9 @@ class PDFGenerator:
             # 길이 체크 (너무 짧거나 긴 경우)
             return not (len(html_content) < 100 or len(html_content) > 50_000_000)  # 50MB
 
-        except Exception:
+        except Exception as e:
+            # 예상치 못한 오류는 로깅 후 False 반환
+            print(f"Warning: HTML validation failed due to unexpected error: {e}")
             return False
 
     async def generate_preview_image(
@@ -218,6 +228,13 @@ class PDFGenerator:
                 data=template_data,
                 css_file=request.config.css_file,
             )
+
+            # HTML 유효성 검증
+            if not self.validate_html_content(html_content):
+                raise PDFGenerationError(
+                    message="HTML 콘텐츠가 미리보기 생성에 적합하지 않습니다",
+                    details={"html_length": len(html_content)}
+                )
 
             # 별도 스레드에서 이미지 생성
             loop = asyncio.get_event_loop()
@@ -251,13 +268,28 @@ class PDFGenerator:
             format: 이미지 포맷
         """
         try:
+            # 1단계: HTML을 PDF로 변환
             html_doc = HTML(string=html_content, encoding="utf-8")
+            pdf_bytes = html_doc.write_pdf()
 
-            # PNG 형태로 첫 페이지 렌더링
-            html_doc.write_png(
-                target=str(output_path),
-                resolution=150,  # DPI
+            # 2단계: PDF 첫 페이지를 이미지로 변환 (pdf2image 사용)
+            images = convert_from_bytes(
+                pdf_bytes,
+                first_page=1,
+                last_page=1,
+                dpi=150,
+                fmt=format.upper() if format in ["jpeg", "jpg"] else "PNG"
             )
+
+            if images:
+                # 첫 번째 (그리고 유일한) 이미지 저장
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                images[0].save(output_path, format.upper())
+            else:
+                raise PDFGenerationError(
+                    message="PDF에서 이미지 변환 결과가 없습니다",
+                    details={"format": format}
+                )
 
         except Exception as e:
             raise PDFGenerationError(
