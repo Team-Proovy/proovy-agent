@@ -18,6 +18,7 @@ from .models import (
     PDFResult,
     TemplateData,
 )
+from .template_renderer import TemplateRenderer
 
 __all__ = [
     "ContentParser",
@@ -32,6 +33,7 @@ __all__ = [
     "PDFResult",
     "PDFValidationError",
     "TemplateData",
+    "TemplateRenderer",
     "TemplateRenderingError",
     "handle_pdf_error",
 ]
