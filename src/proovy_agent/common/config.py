@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     daytona_api_key: str = ""
     daytona_api_url: str = "https://app.daytona.io/api"
     daytona_target: str | None = None
+    daytona_snapshot: str = "proovy-math-sandbox"
+    daytona_sandbox_cpu: int = 2
+    daytona_sandbox_memory: int = 2
+    daytona_sandbox_disk: int = 5
+    daytona_auto_stop_interval: int = 5
+    daytona_code_timeout: int = 60
+    daytona_max_output_chars: int = 10_000
+    sandbox_preamble_name: str = "math_v1"
     database_url: str = ""
 
     model_config = SettingsConfigDict(
