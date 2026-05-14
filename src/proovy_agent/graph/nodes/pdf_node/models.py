@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ContentSection(BaseModel):
@@ -15,8 +15,9 @@ class ContentSection(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     order: int = 0  # 섹션 순서
 
-    @validator("content")
-    def content_not_empty(cls, v: str) -> str:  # noqa: N805
+    @field_validator("content")
+    @classmethod
+    def content_not_empty(cls, v: str) -> str:
         """콘텐츠가 비어있지 않은지 검증."""
         if not v.strip():
             raise ValueError("콘텐츠는 비어있을 수 없습니다")
@@ -39,8 +40,9 @@ class PDFConfig(BaseModel):
     optimize_images: bool = True
     template_name: str = "default"
 
-    @validator("dpi")
-    def dpi_valid_range(cls, v: int) -> int:  # noqa: N805
+    @field_validator("dpi")
+    @classmethod
+    def dpi_valid_range(cls, v: int) -> int:
         """DPI가 유효 범위 내에 있는지 검증."""
         if v < 72 or v > 600:
             raise ValueError("DPI는 72-600 범위여야 합니다")
@@ -55,15 +57,17 @@ class PDFRequest(BaseModel):
     content_sections: list[ContentSection]
     config: PDFConfig = Field(default_factory=PDFConfig)
 
-    @validator("thread_id", "user_id")
-    def ids_not_empty(cls, v: str) -> str:  # noqa: N805
+    @field_validator("thread_id", "user_id")
+    @classmethod
+    def ids_not_empty(cls, v: str) -> str:
         """ID가 비어있지 않은지 검증."""
         if not v.strip():
             raise ValueError("thread_id와 user_id는 필수입니다")
         return v.strip()
 
-    @validator("content_sections")
-    def sections_not_empty(cls, v: list[ContentSection]) -> list[ContentSection]:  # noqa: N805
+    @field_validator("content_sections")
+    @classmethod
+    def sections_not_empty(cls, v: list[ContentSection]) -> list[ContentSection]:
         """섹션이 최소 하나 이상 있는지 검증."""
         if not v:
             raise ValueError("최소 하나의 콘텐츠 섹션이 필요합니다")
@@ -79,15 +83,17 @@ class PDFResult(BaseModel):
     download_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
 
-    @validator("file_size")
-    def file_size_positive(cls, v: int) -> int:  # noqa: N805
+    @field_validator("file_size")
+    @classmethod
+    def file_size_positive(cls, v: int) -> int:
         """파일 크기가 양수인지 검증."""
         if v <= 0:
             raise ValueError("파일 크기는 양수여야 합니다")
         return v
 
-    @validator("generation_time")
-    def generation_time_positive(cls, v: float) -> float:  # noqa: N805
+    @field_validator("generation_time")
+    @classmethod
+    def generation_time_positive(cls, v: float) -> float:
         """생성 시간이 양수인지 검증."""
         if v < 0:
             raise ValueError("생성 시간은 음수일 수 없습니다")
