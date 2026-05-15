@@ -1,6 +1,7 @@
 """SSE event emitter."""
 
 import asyncio
+from collections.abc import AsyncIterator
 
 from proovy_agent.common.sse.events import EventType, SSEEvent
 
@@ -10,16 +11,25 @@ class SSEEmitter:
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue()
+        self._closed: bool = False
+        self._close_lock: asyncio.Lock = asyncio.Lock()
 
     async def emit(self, event: EventType, data: dict) -> None:
         """Enqueue an event for streaming."""
-        await self._queue.put(SSEEvent(event=event, data=data))
+        async with self._close_lock:
+            if self._closed:
+                return
+            await self._queue.put(SSEEvent(event=event, data=data))
 
     async def close(self) -> None:
         """Signal stream end."""
-        await self._queue.put(None)
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            await self._queue.put(None)
 
-    async def stream(self):
+    async def stream(self) -> AsyncIterator[dict[str, str]]:
         """Yield sse-starlette-compatible dicts until closed."""
         while True:
             item = await self._queue.get()
