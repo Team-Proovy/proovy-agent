@@ -68,6 +68,21 @@ async def test_init_get_close_get_lifecycle(monkeypatch: pytest.MonkeyPatch) -> 
     assert reinitialized_client.closed is True
 
 
+async def test_init_daytona_client_keeps_existing_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated initialization keeps the existing shared client."""
+    monkeypatch.setattr(client, "DaytonaConfig", FakeDaytonaConfig)
+    monkeypatch.setattr(client, "AsyncDaytona", FakeAsyncDaytona)
+    await client.init_daytona_client()
+    existing_client = client.get_daytona_client()
+
+    await client.init_daytona_client()
+
+    assert client.get_daytona_client() is existing_client
+    assert existing_client.closed is False
+
+
 async def test_close_daytona_client_noop_when_not_initialized() -> None:
     """Closing without an initialized client is safe."""
     await client.close_daytona_client()
@@ -88,3 +103,28 @@ async def test_close_daytona_client_awaits_close_and_clears_singleton(
 
     assert daytona_client.closed is True
     assert client._client is None
+
+
+async def test_close_daytona_client_clears_singleton_when_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing clears shared state even when the SDK client close fails."""
+
+    class FailingCloseAsyncDaytona(FakeAsyncDaytona):
+        async def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr(client, "DaytonaConfig", FakeDaytonaConfig)
+    monkeypatch.setattr(client, "AsyncDaytona", FailingCloseAsyncDaytona)
+    await client.init_daytona_client()
+    failed_client = client.get_daytona_client()
+
+    await client.close_daytona_client()
+
+    assert failed_client.closed is True
+    assert client._client is None
+
+    monkeypatch.setattr(client, "AsyncDaytona", FakeAsyncDaytona)
+    await client.init_daytona_client()
+    assert client.get_daytona_client() is not failed_client

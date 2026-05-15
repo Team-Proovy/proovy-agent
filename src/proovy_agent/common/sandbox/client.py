@@ -1,8 +1,12 @@
 """Shared AsyncDaytona client lifecycle."""
 
+import logging
+
 from daytona import AsyncDaytona, DaytonaConfig
 
 from proovy_agent.common.config import settings
+
+logger = logging.getLogger(__name__)
 
 _client: AsyncDaytona | None = None
 
@@ -10,6 +14,8 @@ _client: AsyncDaytona | None = None
 async def init_daytona_client() -> None:
     """Initialize the shared AsyncDaytona client once during app startup."""
     global _client
+    if _client is not None:
+        return
     config = DaytonaConfig(
         api_key=settings.daytona_api_key,
         api_url=settings.daytona_api_url,
@@ -28,6 +34,12 @@ def get_daytona_client() -> AsyncDaytona:
 async def close_daytona_client() -> None:
     """Close and clear the shared AsyncDaytona client during app shutdown."""
     global _client
-    if _client is not None:
-        await _client.close()
-        _client = None
+    daytona_client = _client
+    if daytona_client is None:
+        return
+
+    _client = None
+    try:
+        await daytona_client.close()
+    except Exception:
+        logger.exception("Failed to close Daytona client")
