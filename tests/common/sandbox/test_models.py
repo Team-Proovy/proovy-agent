@@ -12,6 +12,7 @@ from proovy_agent.common.sandbox.models import (
     SandboxConfig,
     ShellResult,
 )
+from proovy_agent.common.sandbox.preamble import get_whitelisted_preamble
 
 
 @dataclass
@@ -40,7 +41,7 @@ def test_sandbox_config_from_settings_maps_daytona_values() -> None:
     assert config.code_timeout == 120
     assert config.max_output_chars == 12_345
     assert config.network_block_all is True
-    assert config.preamble_code == "import sympy\nimport numpy as np\nimport scipy\n"
+    assert config.preamble_code == get_whitelisted_preamble("math_v1")
 
 
 def test_sandbox_config_from_settings_propagates_unknown_preamble_error() -> None:
@@ -87,6 +88,14 @@ def test_code_execution_result_supports_populated_error() -> None:
     assert result.model_dump(mode="json")["recovery_hint"] == "reset_recommended"
 
 
+def test_code_execution_result_rejects_error_when_successful() -> None:
+    """Successful code execution results cannot contain an error."""
+    error = CodeError(name="ValueError", value="bad input", traceback="Traceback...")
+
+    with pytest.raises(ValueError, match="error must be None when success is True"):
+        CodeExecutionResult(stdout="ok", error=error, success=True)
+
+
 def test_code_execution_result_round_trips_from_json_dump() -> None:
     """CodeExecutionResult validates back from serialized JSON-mode data."""
     error = CodeError(name="RuntimeError", value="boom", traceback="Traceback...")
@@ -113,6 +122,15 @@ def test_shell_result_fields() -> None:
     assert result.stdout == "done"
     assert result.exit_code == 0
     assert result.success is True
+
+
+def test_shell_result_rejects_success_mismatch() -> None:
+    """ShellResult success must match the shell exit code."""
+    with pytest.raises(ValueError, match="success must match exit_code"):
+        ShellResult(stdout="failed", exit_code=1, success=True)
+
+    with pytest.raises(ValueError, match="success must match exit_code"):
+        ShellResult(stdout="done", exit_code=0, success=False)
 
 
 def test_executor_status_wire_values_are_lowercase() -> None:

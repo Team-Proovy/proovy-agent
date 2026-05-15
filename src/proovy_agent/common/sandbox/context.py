@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio  # noqa: TC003 - required in module globals for annotation introspection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from proovy_agent.common.sandbox.models import ExecutorStatus
 
 if TYPE_CHECKING:
-    import asyncio
-
     from proovy_agent.common.sandbox.executor import CodeExecutor
 
 
