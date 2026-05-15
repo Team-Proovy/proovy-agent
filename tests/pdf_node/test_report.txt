@@ -1,0 +1,27 @@
+PDF Template System Test Report
+=====================================
+Test Date: 2026-05-15 12:56:35
+
+Results:
+- Template Loading: PASS
+- HTML Rendering: PASS
+- CSS Integration: PASS
+- Content Validation: PASS
+
+Generated Files:
+- Basic HTML: test_result_basic.html (3,243 chars)
+- Complete HTML: test_result_complete.html (8,750 chars)
+
+Test Data:
+- Sections: 3
+- Title: 이차방정식 해법 테스트
+- Thread ID: test-001
+
+Next Steps:
+1. Open HTML files in browser to verify rendering
+2. Test PDF generation in proper environment (Linux/Docker)
+3. Validate WeasyPrint integration when dependencies are available
+
+File Locations:
+- C:\proovy\Proovy_agent\proovy-agent\tests\pdf_node\test_result_basic.html
+- C:\proovy\Proovy_agent\proovy-agent\tests\pdf_node\test_result_complete.html

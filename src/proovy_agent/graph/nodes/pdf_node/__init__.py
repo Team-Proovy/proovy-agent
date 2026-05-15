@@ -18,6 +18,7 @@ from .models import (
     PDFResult,
     TemplateData,
 )
+from .pdf_generator import PDFGenerator
 from .template_renderer import TemplateRenderer
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "PDFConfigurationError",
     "PDFError",
     "PDFGenerationError",
+    "PDFGenerator",
     "PDFRequest",
     "PDFResult",
     "PDFValidationError",

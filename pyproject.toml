@@ -28,6 +28,10 @@ dependencies = [
 
     # ── Template Rendering ────────────────────────────────────────
     "jinja2>=3.0",
+    
+    # ── PDF Generation ─────────────────────────────────────────────
+    "weasyprint>=62.0",
+    "pdf2image>=1.17.0",
 ]
 
 [build-system]
