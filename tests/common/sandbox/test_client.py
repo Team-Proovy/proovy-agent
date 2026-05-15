@@ -10,6 +10,7 @@ class FakeDaytonaConfig:
     """Capture Daytona configuration values."""
 
     def __init__(self, api_key: str, api_url: str, target: str | None) -> None:
+        """Store provided Daytona configuration values."""
         self.api_key = api_key
         self.api_url = api_url
         self.target = target
@@ -19,10 +20,12 @@ class FakeAsyncDaytona:
     """Fake async Daytona client."""
 
     def __init__(self, config: FakeDaytonaConfig) -> None:
+        """Store config and initialize close tracking."""
         self.config = config
         self.closed = False
 
     async def close(self) -> None:
+        """Mark the fake client as closed."""
         self.closed = True
 
 
@@ -112,6 +115,7 @@ async def test_close_daytona_client_clears_singleton_when_close_fails(
 
     class FailingCloseAsyncDaytona(FakeAsyncDaytona):
         async def close(self) -> None:
+            """Mark closed and simulate SDK close failure."""
             self.closed = True
             raise RuntimeError("close failed")
 

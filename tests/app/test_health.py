@@ -10,9 +10,11 @@ def test_health_check(monkeypatch: pytest.MonkeyPatch) -> None:
     """Health endpoint returns service status."""
 
     async def init_daytona_client() -> None:
+        """Skip Daytona initialization for the health check test."""
         return None
 
     async def close_daytona_client() -> None:
+        """Skip Daytona cleanup for the health check test."""
         return None
 
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
@@ -33,9 +35,11 @@ def test_app_lifespan_initializes_and_closes_daytona(
     calls: list[str] = []
 
     async def init_daytona_client() -> None:
+        """Record startup initialization."""
         calls.append("init")
 
     async def close_daytona_client() -> None:
+        """Record shutdown cleanup."""
         calls.append("close")
 
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
