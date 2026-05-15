@@ -205,14 +205,14 @@ class PDFGenerator:
         self,
         request: PDFRequest,
         output_path: Path,
-        format: str = "png"
+        image_format: str = "png",
     ) -> Path:
         """PDF의 첫 페이지를 이미지로 미리보기 생성.
 
         Args:
             request: PDF 생성 요청
             output_path: 이미지 저장 경로
-            format: 이미지 포맷 ("png", "jpeg")
+            image_format: 이미지 포맷 ("png", "jpeg", "jpg")
 
         Returns:
             생성된 이미지 파일 경로
@@ -236,6 +236,18 @@ class PDFGenerator:
                     details={"html_length": len(html_content)}
                 )
 
+            # 형식 정규화 (jpg → JPEG, png → PNG)
+            normalized = image_format.lower()
+            if normalized in ("jpg", "jpeg"):
+                pil_format = "JPEG"
+            elif normalized == "png":
+                pil_format = "PNG"
+            else:
+                raise PDFGenerationError(
+                    message=f"지원하지 않는 이미지 포맷: {image_format}",
+                    details={"format": image_format},
+                )
+
             # 별도 스레드에서 이미지 생성
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -243,7 +255,7 @@ class PDFGenerator:
                 self._create_preview_image_sync,
                 html_content,
                 output_path,
-                format
+                pil_format,
             )
 
             return output_path
@@ -258,14 +270,14 @@ class PDFGenerator:
         self,
         html_content: str,
         output_path: Path,
-        format: str
+        pil_format: str,
     ) -> None:
         """동기적으로 미리보기 이미지 생성.
 
         Args:
             html_content: HTML 콘텐츠
             output_path: 출력 파일 경로
-            format: 이미지 포맷
+            pil_format: PIL 이미지 포맷 ("PNG", "JPEG")
         """
         try:
             # 1단계: HTML을 PDF로 변환
@@ -278,21 +290,21 @@ class PDFGenerator:
                 first_page=1,
                 last_page=1,
                 dpi=150,
-                fmt=format.upper() if format in ["jpeg", "jpg"] else "PNG"
+                fmt=pil_format,
             )
 
             if images:
                 # 첫 번째 (그리고 유일한) 이미지 저장
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                images[0].save(output_path, format.upper())
+                images[0].save(output_path, pil_format)
             else:
                 raise PDFGenerationError(
                     message="PDF에서 이미지 변환 결과가 없습니다",
-                    details={"format": format}
+                    details={"format": pil_format}
                 )
 
         except Exception as e:
             raise PDFGenerationError(
                 message=f"이미지 렌더링 실패: {e!s}",
-                details={"format": format}
+                details={"format": pil_format}
             ) from e

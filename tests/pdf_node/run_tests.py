@@ -9,8 +9,8 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # 모델만 직접 import (WeasyPrint 의존성 제외)
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field
+from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 
@@ -21,7 +21,7 @@ class ContentSection(BaseModel):
     content: str
     content_type: str = "text"
     order: int
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 
 
 class TemplateData(BaseModel):
@@ -29,20 +29,15 @@ class TemplateData(BaseModel):
     title: str
     thread_id: str
     user_id: str
-    sections: List[ContentSection]
-    generated_at: datetime = None
-    
-    def __init__(self, **data):
-        if 'generated_at' not in data:
-            data['generated_at'] = datetime.now()
-        super().__init__(**data)
+    sections: list[ContentSection]
+    generated_at: datetime = Field(default_factory=datetime.now)
     
     @property
     def formatted_date(self) -> str:
         return self.generated_at.strftime("%Y년 %m월 %d일 %H:%M")
 
 
-def test_template_system():
+def test_template_system() -> bool:
     """템플릿 시스템 테스트."""
     print("PDF Template System Test")
     print("=" * 40)
@@ -281,7 +276,7 @@ File Locations:
     return True
 
 
-def main():
+def main() -> int:
     """메인 함수."""
     try:
         success = test_template_system()
