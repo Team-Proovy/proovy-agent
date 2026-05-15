@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from daytona import AsyncSandbox
 
 
 class CodeExecutor:
@@ -10,7 +13,7 @@ class CodeExecutor:
 
     def __init__(
         self,
-        sandbox: Any,
+        sandbox: AsyncSandbox,
         code_timeout: int = 60,
         max_output_chars: int = 10_000,
         preamble_code: str = "",
@@ -21,7 +24,7 @@ class CodeExecutor:
         self._preamble_code = preamble_code
 
     @property
-    def sandbox(self) -> Any:
+    def sandbox(self) -> AsyncSandbox:
         return self._sandbox
 
     async def cleanup(self) -> None:

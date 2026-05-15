@@ -36,11 +36,14 @@ class FakeCreateSandboxFromSnapshotParams:
 
 
 class FakeSandbox:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
         self.deleted = False
+        self.events = events
 
     async def delete(self) -> None:
         self.deleted = True
+        if self.events is not None:
+            self.events.append("sandbox.delete")
 
 
 class FakeClient:
@@ -60,12 +63,14 @@ class FakeCodeExecutor:
         code_timeout: int,
         max_output_chars: int,
         preamble_code: str,
+        events: list[str] | None = None,
     ) -> None:
         self._sandbox = sandbox
         self.code_timeout = code_timeout
         self.max_output_chars = max_output_chars
         self.preamble_code = preamble_code
         self.cleaned = False
+        self.events = events
 
     @property
     def sandbox(self) -> FakeSandbox:
@@ -73,6 +78,8 @@ class FakeCodeExecutor:
 
     async def cleanup(self) -> None:
         self.cleaned = True
+        if self.events is not None:
+            self.events.append("executor.cleanup")
 
 
 @pytest.fixture(autouse=True)
@@ -153,14 +160,16 @@ async def test_create_executor_converts_sdk_errors_to_sandbox_creation_error() -
 
 
 async def test_destroy_executor_cleans_up_then_deletes_sandbox() -> None:
-    sandbox = FakeSandbox()
-    executor = FakeCodeExecutor(sandbox, 60, 10_000, "")
+    events: list[str] = []
+    sandbox = FakeSandbox(events)
+    executor = FakeCodeExecutor(sandbox, 60, 10_000, "", events)
     sandbox_manager = manager.SandboxManager(FakeClient())
 
     await sandbox_manager.destroy_executor(executor)
 
     assert executor.cleaned is True
     assert sandbox.deleted is True
+    assert events == ["executor.cleanup", "sandbox.delete"]
 
 
 async def test_destroy_executor_deletes_sandbox_when_cleanup_fails() -> None:
@@ -197,11 +206,27 @@ async def test_destroy_executor_suppresses_delete_failure() -> None:
 
 async def test_destroy_executor_outer_timeout_returns_without_raising() -> None:
     class SlowCleanupExecutor(FakeCodeExecutor):
+        def __init__(
+            self,
+            sandbox: FakeSandbox,
+            code_timeout: int,
+            max_output_chars: int,
+            preamble_code: str,
+        ) -> None:
+            super().__init__(sandbox, code_timeout, max_output_chars, preamble_code)
+            self.cleanup_started = False
+
         async def cleanup(self) -> None:
+            self.cleanup_started = True
             await asyncio.sleep(60)
+            self.cleaned = True
 
     sandbox = FakeSandbox()
     executor = SlowCleanupExecutor(sandbox, 60, 10_000, "")
     sandbox_manager = manager.SandboxManager(FakeClient())
 
     await sandbox_manager.destroy_executor(executor, timeout=0.01)
+
+    assert executor.cleanup_started is True
+    assert executor.cleaned is False
+    assert sandbox.deleted is True
