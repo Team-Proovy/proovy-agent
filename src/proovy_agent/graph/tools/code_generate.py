@@ -36,7 +36,13 @@ async def code_generate(problem: str, approach: str) -> str:
         {"role": "user", "content": f"문제: {problem}\n\n풀이 방향: {approach}"},
     ]
     response = await llm.ainvoke(messages)
-    code = response.content.strip()
+    raw = response.content
+    if isinstance(raw, list):
+        code = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in raw
+        ).strip()
+    else:
+        code = str(raw).strip()
 
     if emitter:
         await emitter.emit("tool_result", {"name": "code_generate", "output": code})
