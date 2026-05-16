@@ -198,19 +198,32 @@ class ContentParser:
 
     def _detect_content_type(self, content: str) -> str:
         """내용 분석하여 타입 결정."""
-        # 수식 포함 여부 확인
-        for pattern in self.math_patterns:
-            if re.search(pattern, content):
-                return "math"
-
+        # 코드 블록 확인 (최우선)
+        if "```" in content or "def " in content or "import " in content:
+            return "code"
+        
         # 이미지 참조 확인
         for pattern in self.image_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 return "image"
-
-        # 코드 블록 확인
-        if "```" in content or "def " in content or "import " in content:
-            return "code"
+        
+        # 수식 위주 내용인지 확인 (더 엄격한 조건)
+        math_count = 0
+        text_lines = content.split('\n')
+        total_lines = len(text_lines)
+        
+        for line in text_lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 수식 기호가 많거나 LaTeX 형식이면 math
+            math_symbols = sum(1 for pattern in self.math_patterns if re.search(pattern, line))
+            if math_symbols > 2 or any(pattern in line for pattern in [r'\(', r'\[', '$']):
+                math_count += 1
+        
+        # 전체 라인의 절반 이상이 수식이면 math 타입
+        if total_lines > 0 and math_count / total_lines > 0.5:
+            return "math"
 
         return "text"
 

@@ -6,10 +6,8 @@
         {% for section in sections %}
         <section class="solution-section" data-type="{{ section.content_type }}" data-order="{{ section.order }}">
             <header class="section-header">
-                <h2 class="section-title">
-                    <span class="section-icon">{{ section.content_type | section_icon }}</span>
-                    {{ section.title }}
-                </h2>
+                <span class="section-icon">{{ section.content_type | section_icon }}</span>
+                <h2 class="section-title">{{ section.title }}</h2>
                 {% if section.content_type != "text" %}
                 <span class="section-type-label">{{ section.content_type | upper }}</span>
                 {% endif %}

@@ -87,8 +87,13 @@ class PDFRequest(BaseModel):
         Returns:
             템플릿 렌더링에 사용할 TemplateData 인스턴스
         """
+        # 첫 번째 섹션의 제목을 사용하거나 기본값 사용
+        title = "이차방정식 해법 테스트"
+        if self.content_sections and self.content_sections[0].title:
+            title = self.content_sections[0].title
+        
         return TemplateData(
-            title="수학 문제 해설지",
+            title=title,
             thread_id=self.thread_id,
             user_id=self.user_id,
             sections=self.content_sections

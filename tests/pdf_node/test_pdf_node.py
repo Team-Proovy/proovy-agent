@@ -57,25 +57,34 @@ async def test_pdf_node_basic():
         for i, section in enumerate(pdf_request.content_sections):
             print(f"    섹션 {i+1}: {section.title} ({section.content_type})")
         
-        print("\nPDF 생성 테스트...")
+        print("\nHTML → PDF 변환 테스트...")
         try:
-            result = await pdf_node(test_state)
-            print("PDFNode 실행 성공")
-            print(f"결과 타입: {type(result)}")
-            print(f"결과 키들: {list(result.keys()) if isinstance(result, dict) else 'Not dict'}")
+            from proovy_agent.graph.nodes.pdf_node.pdf_generator import PDFGenerator
             
-            if isinstance(result, dict) and "messages" in result:
-                print(f"반환된 메시지 수: {len(result['messages'])}")
-                if result["messages"]:
-                    last_msg = result["messages"][-1]
-                    print(f"마지막 메시지 내용: {last_msg.content[:100]}...")
+            # HTML 파일 경로 
+            html_file = Path(__file__).parent / "test_result_complete.html"
+            output_file = Path("/app/outputs/test_result_complete_converted.pdf")
+            
+            print(f"HTML 파일: {html_file}")
+            print(f"출력 파일: {output_file}")
+            
+            # PDFGenerator로 HTML → PDF 변환
+            pdf_gen = PDFGenerator()
+            success = await pdf_gen.generate_pdf_from_html_file(html_file, output_file)
+            
+            if success:
+                file_size = output_file.stat().st_size
+                print(f"HTML → PDF 변환 성공!")
+                print(f"파일 크기: {file_size / 1024:.1f}KB")
+                print(f"저장 위치: {output_file}")
+            else:
+                print("HTML → PDF 변환 실패")
             
         except Exception as e:
-            print(f"PDF 생성 실행 중 예외: {e}")
-            print("이는 WeasyPrint 의존성 또는 템플릿 파일 부재로 인한 것일 수 있습니다.")
-            
-            if "PDF" in str(e) or "template" in str(e).lower():
-                print("PDF 관련 에러가 적절히 발생했습니다 (정상)")
+            print(f"HTML → PDF 변환 중 예외: {e}")
+            import traceback
+            traceback.print_exc()
+        
         
         print("\ncreate_pdf_node 팩토리 함수 테스트...")
         factory_node = create_pdf_node(output_dir=str(temp_path))

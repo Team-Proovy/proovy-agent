@@ -118,6 +118,44 @@ class PDFGenerator:
                 details={"html_length": len(html_content)}
             ) from e
 
+    async def generate_pdf_from_html_file(self, html_file_path: str | Path, output_path: str | Path) -> bool:
+        """HTML 파일을 직접 PDF로 변환.
+        
+        Args:
+            html_file_path: 입력 HTML 파일 경로
+            output_path: 출력 PDF 파일 경로
+            
+        Returns:
+            변환 성공 여부
+        """
+        try:
+            html_file = Path(html_file_path)
+            output_file = Path(output_path)
+            
+            if not html_file.exists():
+                print(f"HTML 파일이 존재하지 않습니다: {html_file}")
+                return False
+                
+            # HTML 파일을 직접 WeasyPrint로 변환
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._convert_html_file_sync,
+                str(html_file),
+                str(output_file)
+            )
+            
+            return output_file.exists()
+            
+        except Exception as e:
+            print(f"HTML → PDF 변환 실패: {e}")
+            return False
+    
+    def _convert_html_file_sync(self, html_file_path: str, output_path: str) -> None:
+        """동기적으로 HTML 파일을 PDF로 변환."""
+        html_doc = HTML(filename=html_file_path)
+        html_doc.write_pdf(output_path)
+
     def _create_pdf_sync(self, html_content: str, config: PDFConfig) -> bytes:
         """동기적으로 PDF 생성 (스레드 풀에서 실행).
 

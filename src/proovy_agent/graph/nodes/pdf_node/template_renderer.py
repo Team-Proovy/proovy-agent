@@ -64,12 +64,12 @@ class TemplateRenderer:
         def section_icon(section_type: str) -> str:
             """섹션 타입별 아이콘 반환."""
             icons = {
-                "text": "T",  # 이모지 제거
-                "math": "M",
-                "image": "I",
-                "code": "C",
+                "text": "TEXT",
+                "math": "MATH", 
+                "image": "IMAGE",
+                "code": "CODE",
             }
-            return icons.get(section_type, "S")
+            return icons.get(section_type, "SECTION")
 
         def escape_newlines(content: str) -> str:
             """개행 문자를 HTML <br> 태그로 변환."""
