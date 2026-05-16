@@ -1,4 +1,4 @@
-"""Sandbox lifecycle manager."""
+"""Sandbox lifecycle을 관리합니다."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxManager:
-    """Create and destroy Daytona sandbox executors."""
+    """Daytona Sandbox executor를 생성하고 정리합니다."""
 
     def __init__(self, client: AsyncDaytona) -> None:
         self._client = client
@@ -37,7 +37,7 @@ class SandboxManager:
             )
             sandbox = await self._client.create(params)
         except Exception as exc:
-            raise SandboxCreationError(f"Sandbox creation failed: {exc}") from exc
+            raise SandboxCreationError(f"Sandbox 생성 실패: {exc}") from exc
 
         return CodeExecutor(
             sandbox=sandbox,
@@ -58,13 +58,13 @@ class SandboxManager:
             try:
                 await asyncio.wait_for(executor.cleanup(), timeout=3.0)
             except Exception:
-                logger.exception("Executor cleanup failed")
+                logger.exception("Executor cleanup 실패")
             finally:
                 try:
                     await asyncio.wait_for(sandbox.delete(), timeout=5.0)
                 except Exception:
                     logger.warning(
-                        "Sandbox deletion failed; Daytona auto_stop will be used as fallback",
+                        "Sandbox 삭제 실패; Daytona auto_stop을 fallback으로 사용합니다",
                         exc_info=True,
                     )
 
@@ -72,6 +72,6 @@ class SandboxManager:
             await asyncio.wait_for(_destroy(), timeout=timeout)
         except TimeoutError:
             logger.error(
-                "destroy_executor timed out after %.1f seconds; Daytona auto_stop will be used as fallback",
+                "destroy_executor 전체 timeout (%.1f초); Daytona auto_stop을 fallback으로 사용합니다",
                 timeout,
             )

@@ -1,4 +1,4 @@
-"""Code executor wrapper for Daytona sandboxes."""
+"""Daytona Sandbox를 감싸는 CodeExecutor."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class CodeExecutor:
-    """Minimal Daytona sandbox wrapper used by SandboxManager."""
+    """SandboxManager가 사용하는 최소 Daytona Sandbox 래퍼."""
 
     def __init__(
         self,

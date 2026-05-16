@@ -1,4 +1,4 @@
-"""SandboxManager tests."""
+"""SandboxManager 테스트."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ async def test_create_executor_converts_sdk_errors_to_sandbox_creation_error() -
 
     sandbox_manager = manager.SandboxManager(FailingClient())
 
-    with pytest.raises(SandboxCreationError, match="Sandbox creation failed") as exc_info:
+    with pytest.raises(SandboxCreationError, match="Sandbox 생성 실패") as exc_info:
         await sandbox_manager.create_executor("thread-123")
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
