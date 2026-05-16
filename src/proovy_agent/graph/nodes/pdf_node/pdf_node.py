@@ -1,6 +1,7 @@
 """PDF 해설지 생성 LangGraph 노드."""
 
 import asyncio
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -87,10 +88,19 @@ class PDFNode:
 
         sections = await self.content_parser.parse_messages(messages)
 
+        # 필수 메타데이터 확인
+        thread_id = getattr(state, "thread_id", None)
+        user_id = getattr(state, "user_id", None)
+        
+        if not thread_id:
+            raise ValueError("thread_id가 State에 없습니다. PDF 생성에 필수입니다.")
+        if not user_id:
+            raise ValueError("user_id가 State에 없습니다. PDF 생성에 필수입니다.")
+
         # PDFRequest 생성
         request = PDFRequest(
-            thread_id=getattr(state, "thread_id", "unknown"),
-            user_id=getattr(state, "user_id", "unknown"), 
+            thread_id=thread_id,
+            user_id=user_id, 
             content_sections=sections,
             request_id=f"pdf_{int(time.time() * 1000)}",  # 타임스탬프 기반 ID
             config=PDFConfig()  # 기본 설정 사용
@@ -137,8 +147,10 @@ class PDFNode:
             저장된 파일 경로
         """
         try:
-            # 파일명 생성 (thread_id 기반)
-            filename = f"solution_{request.thread_id}_{request.request_id}.pdf"
+            # 파일명 생성 (thread_id, request_id 경로 안전화)
+            safe_thread_id = re.sub(r'[^\w\-_]', '_', request.thread_id)[:50]
+            safe_request_id = re.sub(r'[^\w\-_]', '_', str(request.request_id))[:30]
+            filename = f"solution_{safe_thread_id}_{safe_request_id}.pdf"
             file_path = self.output_dir / filename
 
             # 비동기적으로 파일 저장

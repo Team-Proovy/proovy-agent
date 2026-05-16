@@ -77,13 +77,15 @@ async def test_pdf_node_basic():
                 print(f"HTML → PDF 변환 성공!")
                 print(f"파일 크기: {file_size / 1024:.1f}KB")
                 print(f"저장 위치: {output_file}")
+                assert file_size > 0, "생성된 PDF 파일 크기가 0입니다"
             else:
-                print("HTML → PDF 변환 실패")
+                raise AssertionError("HTML → PDF 변환이 실패했습니다")
             
         except Exception as e:
             print(f"HTML → PDF 변환 중 예외: {e}")
             import traceback
             traceback.print_exc()
+            raise
         
         
         print("\ncreate_pdf_node 팩토리 함수 테스트...")

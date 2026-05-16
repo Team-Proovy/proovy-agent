@@ -115,8 +115,11 @@ class PDFResult(BaseModel):
 
     @field_validator("file_size")
     @classmethod
-    def file_size_positive(cls, v: int) -> int:
-        """파일 크기가 양수인지 검증."""
+    def file_size_positive(cls, v: int, values) -> int:
+        """파일 크기가 양수인지 검증 (실패 시에는 0 허용)."""
+        success = values.data.get('success', True)
+        if not success and v == 0:
+            return v  # 실패 시 file_size=0 허용
         if v <= 0:
             raise ValueError("파일 크기는 양수여야 합니다")
         return v
