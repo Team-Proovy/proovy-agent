@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 def _load_sdk_error_types() -> tuple[type[BaseException], ...]:
     try:
-        from daytona_sdk.common.errors import DaytonaError  # type: ignore
-    except Exception:
+        from daytona.common.errors import DaytonaError
+    except ImportError:
         return ()
     return (DaytonaError,)
 
@@ -31,17 +31,17 @@ def _load_timeout_error_types() -> tuple[type[BaseException], ...]:
     candidates: list[type[BaseException]] = []
 
     try:
-        from daytona_sdk.common.errors import DaytonaTimeoutError  # type: ignore
+        from daytona.common.errors import DaytonaTimeoutError
 
         candidates.append(DaytonaTimeoutError)
-    except Exception:
+    except ImportError:
         pass
 
     try:
         from httpx import TimeoutException
 
         candidates.append(TimeoutException)
-    except Exception:
+    except ImportError:
         pass
 
     return tuple(candidates)
@@ -162,9 +162,9 @@ class CodeExecutor:
                 context=context,
                 timeout=min(self._code_timeout, 30),
             )
-        except Exception:
+        except Exception as exc:
             await self._discard_context_unlocked(context)
-            raise
+            self._translate_exception(exc)
 
         if getattr(result, "error", None) is not None:
             error = result.error
@@ -181,7 +181,6 @@ class CodeExecutor:
         timeout: int | None = None,  # noqa: ASYNC109
     ) -> CodeExecutionResult:
         async with self._lock:
-            context = await self._ensure_context_unlocked()
             output = _OutputCollector(max_chars=self._max_output_chars)
 
             def on_stdout(message: Any) -> None:
@@ -191,6 +190,7 @@ class CodeExecutor:
                 output.append("stderr", getattr(message, "output", ""))
 
             try:
+                context = await self._ensure_context_unlocked()
                 result = await self._sandbox.code_interpreter.run_code(
                     code,
                     context=context,
@@ -199,13 +199,7 @@ class CodeExecutor:
                     timeout=timeout if timeout is not None else self._code_timeout,
                 )
             except Exception as exc:
-                if isinstance(exc, AssertionError):
-                    raise
-                if _is_timeout_exception(exc):
-                    raise SandboxTimeoutError(str(exc)) from exc
-                if _is_sdk_exception(exc):
-                    raise CodeExecutionError(str(exc)) from exc
-                raise
+                self._translate_exception(exc)
 
             runtime_error = getattr(result, "error", None)
             if runtime_error is not None:
@@ -231,6 +225,16 @@ class CodeExecutor:
                 truncated=output.truncated,
                 recovery_hint=RecoveryHint.NONE,
             )
+
+    @staticmethod
+    def _translate_exception(exc: Exception) -> None:
+        if isinstance(exc, AssertionError):
+            raise exc
+        if _is_timeout_exception(exc):
+            raise SandboxTimeoutError(str(exc)) from exc
+        if _is_sdk_exception(exc):
+            raise CodeExecutionError(str(exc)) from exc
+        raise exc
 
     async def reset_context(self) -> None:
         async with self._lock:

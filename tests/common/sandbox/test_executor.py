@@ -259,6 +259,39 @@ async def test_run_python_converts_runtime_result_error_to_code_error_and_hint()
     assert result.recovery_hint is RecoveryHint.RESET_RECOMMENDED
 
 
+def test_loads_installed_daytona_exception_types() -> None:
+    from daytona.common.errors import DaytonaError, DaytonaTimeoutError
+
+    assert executor_module._load_sdk_error_types() == (DaytonaError,)
+    assert DaytonaTimeoutError in executor_module._load_timeout_error_types()
+
+
+async def test_run_python_translates_context_creation_timeout() -> None:
+    class ContextTimeoutInterpreter(FakeCodeInterpreter):
+        async def create_context(self, cwd: object | None = None) -> str:
+            raise DaytonaTimeoutError("context timed out")
+
+    class ContextTimeoutSandbox:
+        def __init__(self) -> None:
+            self.code_interpreter = ContextTimeoutInterpreter()
+
+    code_executor = executor_module.CodeExecutor(sandbox=ContextTimeoutSandbox())
+
+    with pytest.raises(SandboxTimeoutError, match="context timed out"):
+        await code_executor.run_python("print('hi')")
+
+
+async def test_run_python_translates_preamble_sdk_error() -> None:
+    sandbox = FakeSandbox([FakeRunCall(exception=DaytonaSdkError("preamble exploded"))])
+    code_executor = executor_module.CodeExecutor(sandbox=sandbox, preamble_code="import math\n")
+
+    with pytest.raises(CodeExecutionError, match="preamble exploded"):
+        await code_executor.run_python("print('hi')")
+
+    assert sandbox.code_interpreter.delete_context_calls == ["ctx-1"]
+    assert code_executor._context is None
+
+
 async def test_run_python_translates_daytona_timeout_exception() -> None:
     sandbox = FakeSandbox(
         [

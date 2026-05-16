@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
@@ -37,13 +38,55 @@ async def executor():
     client = get_daytona_client()
     config = SandboxConfig.from_settings(settings)
     manager = SandboxManager(client)
-    executor = await manager.create_executor("integration-thread", config=config)
+    created_executor = None
 
     try:
-        yield executor
+        created_executor = await manager.create_executor("integration-thread", config=config)
+        yield created_executor
     finally:
-        await manager.destroy_executor(executor)
+        if created_executor is not None:
+            await manager.destroy_executor(created_executor)
         await close_daytona_client()
+
+
+async def test_executor_fixture_closes_client_when_create_executor_fails(monkeypatch) -> None:
+    events: list[str] = []
+
+    async def fake_init_daytona_client() -> None:
+        events.append("init")
+
+    def fake_get_daytona_client() -> object:
+        events.append("get_client")
+        return object()
+
+    async def fake_close_daytona_client() -> None:
+        events.append("close")
+
+    class FailingManager:
+        def __init__(self, client: object) -> None:
+            events.append("manager")
+
+        async def create_executor(
+            self, thread_id: str, config: SandboxConfig | None = None
+        ) -> object:
+            events.append("create")
+            raise RuntimeError("create failed")
+
+        async def destroy_executor(self, created_executor: object) -> None:
+            events.append("destroy")
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "init_daytona_client", fake_init_daytona_client)
+    monkeypatch.setattr(module, "get_daytona_client", fake_get_daytona_client)
+    monkeypatch.setattr(module, "close_daytona_client", fake_close_daytona_client)
+    monkeypatch.setattr(module, "SandboxManager", FailingManager)
+
+    fixture = executor.__wrapped__()
+
+    with pytest.raises(RuntimeError, match="create failed"):
+        await fixture.__anext__()
+
+    assert events == ["init", "get_client", "manager", "create", "close"]
 
 
 async def test_run_python_prints_basic_output(executor) -> None:
