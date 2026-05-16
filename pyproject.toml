@@ -28,7 +28,7 @@ dependencies = [
 
     # ── Template Rendering ────────────────────────────────────────
     "jinja2>=3.0",
-    
+
     # ── PDF Generation ─────────────────────────────────────────────
     "weasyprint>=62.0",
     "pdf2image>=1.17.0",
@@ -101,3 +101,6 @@ indent-style = "space"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests requiring external services such as Daytona",
+]
