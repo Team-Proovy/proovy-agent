@@ -38,7 +38,9 @@ class PDFConfig(BaseModel):
     )
     dpi: int = 300
     optimize_images: bool = True
-    template_name: str = "default"
+    template_name: str = "solution.html"
+    css_file: str = "solution.css"
+    additional_css: str | None = None
 
     @field_validator("dpi")
     @classmethod
@@ -56,6 +58,12 @@ class PDFRequest(BaseModel):
     user_id: str
     content_sections: list[ContentSection]
     config: PDFConfig = Field(default_factory=PDFConfig)
+    request_id: str | None = None
+
+    @property
+    def sections(self) -> list[ContentSection]:
+        """content_sections의 별칭 (backwards compatibility)."""
+        return self.content_sections
 
     @field_validator("thread_id", "user_id")
     @classmethod
@@ -73,25 +81,50 @@ class PDFRequest(BaseModel):
             raise ValueError("최소 하나의 콘텐츠 섹션이 필요합니다")
         return v
 
+    def to_template_data(self) -> "TemplateData":
+        """PDFRequest를 TemplateData로 변환.
+        
+        Returns:
+            템플릿 렌더링에 사용할 TemplateData 인스턴스
+        """
+        # 첫 번째 섹션의 제목을 사용하거나 기본값 사용
+        title = "이차방정식 해법 테스트"
+        if self.content_sections and self.content_sections[0].title:
+            title = self.content_sections[0].title
+        
+        return TemplateData(
+            title=title,
+            thread_id=self.thread_id,
+            user_id=self.user_id,
+            sections=self.content_sections
+        )
+
 
 class PDFResult(BaseModel):
     """PDF 생성 결과."""
 
-    file_path: str
+    pdf_data: bytes
     file_size: int
-    generation_time: float
+    generation_time_ms: float = 0.0
+    request_id: str | None = None
+    success: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    file_path: str | None = None
     download_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
 
     @field_validator("file_size")
     @classmethod
-    def file_size_positive(cls, v: int) -> int:
-        """파일 크기가 양수인지 검증."""
+    def file_size_positive(cls, v: int, values) -> int:
+        """파일 크기가 양수인지 검증 (실패 시에는 0 허용)."""
+        success = values.data.get('success', True)
+        if not success and v == 0:
+            return v  # 실패 시 file_size=0 허용
         if v <= 0:
             raise ValueError("파일 크기는 양수여야 합니다")
         return v
 
-    @field_validator("generation_time")
+    @field_validator("generation_time_ms")
     @classmethod
     def generation_time_positive(cls, v: float) -> float:
         """생성 시간이 양수인지 검증."""

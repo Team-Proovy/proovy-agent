@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  pdf-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - ./tests/pdf_node/outputs:/app/outputs
+    environment:
+      - PYTHONPATH=/app/src
+    working_dir: /app
