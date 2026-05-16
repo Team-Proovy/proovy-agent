@@ -38,7 +38,6 @@ class TemplateRenderer:
     def _register_filters(self) -> None:
         """Jinja2 커스텀 필터 등록."""
 
-        @self.env.filter
         def format_math(content: str) -> str:
             """수식 내용을 HTML용으로 포맷팅 (기본 버전)."""
             # Phase 2에서 MathJax/KaTeX로 업그레이드 예정
@@ -62,23 +61,20 @@ class TemplateRenderer:
 
             return content
 
-        @self.env.filter
         def section_icon(section_type: str) -> str:
             """섹션 타입별 아이콘 반환."""
             icons = {
-                "text": "📝",
-                "math": "🔢",
-                "image": "📊",
-                "code": "💻",
+                "text": "T",  # 이모지 제거
+                "math": "M",
+                "image": "I",
+                "code": "C",
             }
-            return icons.get(section_type, "📄")
+            return icons.get(section_type, "S")
 
-        @self.env.filter
         def escape_newlines(content: str) -> str:
             """개행 문자를 HTML <br> 태그로 변환."""
             return content.replace("\n", "<br>")
 
-        @self.env.filter
         def format_code_block(content: str) -> str:
             """코드 블록을 HTML pre/code 태그로 래핑."""
             if "```" in content:
@@ -93,7 +89,6 @@ class TemplateRenderer:
                 return "".join(result)
             return content
 
-        @self.env.filter
         def image_to_base64(image_path: str) -> str:
             """이미지 파일을 base64로 변환하여 HTML에 임베딩."""
             try:
@@ -148,6 +143,13 @@ class TemplateRenderer:
                 # 로깅 추가로 디버깅 개선
                 print(f"Warning: Image processing failed for {image_path}: {e}")
                 return ""  # 이미지 로드 실패 시 빈 문자열 반환
+
+        # 필터들을 환경에 등록
+        self.env.filters['format_math'] = format_math
+        self.env.filters['section_icon'] = section_icon
+        self.env.filters['escape_newlines'] = escape_newlines
+        self.env.filters['format_code_block'] = format_code_block
+        self.env.filters['image_to_base64'] = image_to_base64
 
     def render_template(self, template_name: str, data: TemplateData) -> str:
         """템플릿을 렌더링하여 HTML 문자열 반환.

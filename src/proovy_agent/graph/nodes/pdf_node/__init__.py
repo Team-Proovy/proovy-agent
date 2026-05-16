@@ -19,6 +19,7 @@ from .models import (
     TemplateData,
 )
 from .pdf_generator import PDFGenerator
+from .pdf_node import PDFNode, create_pdf_node
 from .template_renderer import TemplateRenderer
 
 __all__ = [
@@ -31,11 +32,13 @@ __all__ = [
     "PDFError",
     "PDFGenerationError",
     "PDFGenerator",
+    "PDFNode",
     "PDFRequest",
     "PDFResult",
     "PDFValidationError",
     "TemplateData",
     "TemplateRenderer",
     "TemplateRenderingError",
+    "create_pdf_node",
     "handle_pdf_error",
 ]
