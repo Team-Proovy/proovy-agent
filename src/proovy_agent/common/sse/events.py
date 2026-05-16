@@ -1,5 +1,6 @@
-"""SSE event type definitions."""
+"""SSE 이벤트 타입 정의."""
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel
@@ -23,7 +24,5 @@ class SSEEvent(BaseModel):
     data: dict
 
     def to_sse(self) -> dict:
-        """Return dict compatible with sse-starlette ServerSentEvent."""
-        import json
-
+        """sse-starlette ServerSentEvent 호환 dict를 반환한다."""
         return {"event": self.event, "data": json.dumps(self.data, ensure_ascii=False)}
