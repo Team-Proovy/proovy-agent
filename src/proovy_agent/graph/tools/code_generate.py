@@ -30,19 +30,24 @@ async def code_generate(problem: str, approach: str) -> str:
             "tool_start", {"name": "code_generate", "label": "🔧 검증 코드 생성 중..."}
         )
 
-    llm = get_llm("flash")
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": f"문제: {problem}\n\n풀이 방향: {approach}"},
-    ]
-    response = await llm.ainvoke(messages)
-    raw = response.content
-    if isinstance(raw, list):
-        code = "".join(
-            block.get("text", "") if isinstance(block, dict) else str(block) for block in raw
-        ).strip()
-    else:
-        code = str(raw).strip()
+    try:
+        llm = get_llm("flash")
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": f"문제: {problem}\n\n풀이 방향: {approach}"},
+        ]
+        response = await llm.ainvoke(messages)
+        raw = response.content
+        if isinstance(raw, list):
+            code = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block) for block in raw
+            ).strip()
+        else:
+            code = str(raw).strip()
+    except Exception as exc:
+        if emitter:
+            await emitter.emit("error", {"name": "code_generate", "message": str(exc)})
+        raise
 
     if emitter:
         await emitter.emit("tool_result", {"name": "code_generate", "output": code})
