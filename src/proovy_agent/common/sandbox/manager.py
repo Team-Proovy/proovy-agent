@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 
-from daytona import AsyncDaytona, CreateSandboxFromSnapshotParams, Resources
+from daytona import AsyncDaytona, CreateSandboxFromSnapshotParams
 
 from proovy_agent.common.config import settings
 from proovy_agent.common.sandbox.exceptions import SandboxCreationError
@@ -13,6 +14,11 @@ from proovy_agent.common.sandbox.executor import CodeExecutor
 from proovy_agent.common.sandbox.models import SandboxConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _consume_cancelled_delete_task(task: asyncio.Task[None]) -> None:
+    with suppress(Exception, asyncio.CancelledError):
+        task.result()
 
 
 class SandboxManager:
@@ -31,7 +37,6 @@ class SandboxManager:
             params = CreateSandboxFromSnapshotParams(
                 snapshot=cfg.snapshot,
                 labels={"thread_id": thread_id},
-                resources=Resources(cpu=cfg.cpu, memory=cfg.memory, disk=cfg.disk),
                 auto_stop_interval=cfg.auto_stop_interval,
                 network_block_all=cfg.network_block_all,
             )
@@ -60,8 +65,32 @@ class SandboxManager:
             except Exception:
                 logger.exception("Executor cleanup 실패")
             finally:
+                delete_task = asyncio.create_task(sandbox.delete())
                 try:
-                    await asyncio.wait_for(sandbox.delete(), timeout=5.0)
+                    await asyncio.wait_for(asyncio.shield(delete_task), timeout=5.0)
+                except asyncio.CancelledError:
+                    try:
+                        await asyncio.wait_for(delete_task, timeout=5.0)
+                    except TimeoutError:
+                        delete_task.cancel()
+                        delete_task.add_done_callback(_consume_cancelled_delete_task)
+                        logger.warning(
+                            "Sandbox 삭제 timeout; Daytona auto_stop을 fallback으로 사용합니다",
+                            exc_info=True,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Sandbox 삭제 실패; Daytona auto_stop을 fallback으로 사용합니다",
+                            exc_info=True,
+                        )
+                    raise
+                except TimeoutError:
+                    delete_task.cancel()
+                    delete_task.add_done_callback(_consume_cancelled_delete_task)
+                    logger.warning(
+                        "Sandbox 삭제 timeout; Daytona auto_stop을 fallback으로 사용합니다",
+                        exc_info=True,
+                    )
                 except Exception:
                     logger.warning(
                         "Sandbox 삭제 실패; Daytona auto_stop을 fallback으로 사용합니다",
