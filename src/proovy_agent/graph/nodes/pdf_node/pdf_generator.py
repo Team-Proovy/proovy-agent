@@ -25,6 +25,7 @@ class PDFGenerator:
 
         # WeasyPrint 로깅 레벨 설정 (경고 메시지 최소화)
         import logging
+
         logging.getLogger("weasyprint").setLevel(logging.ERROR)
         logging.getLogger("fontTools").setLevel(logging.ERROR)
 
@@ -55,7 +56,7 @@ class PDFGenerator:
             if not self.validate_html_content(html_content):
                 raise PDFGenerationError(
                     message="HTML 콘텐츠가 PDF 생성에 적합하지 않습니다",
-                    details={"html_length": len(html_content)}
+                    details={"html_length": len(html_content)},
                 )
 
             # PDF 생성
@@ -72,7 +73,7 @@ class PDFGenerator:
                     "template": request.config.template_name,
                     "sections_count": len(request.sections),
                     "has_images": any(s.content_type == "image" for s in request.sections),
-                }
+                },
             )
 
             return result
@@ -84,7 +85,7 @@ class PDFGenerator:
             else:
                 raise PDFGenerationError(
                     message=f"PDF 생성 중 예상치 못한 오류: {e!s}",
-                    details={"request_id": request.request_id}
+                    details={"request_id": request.request_id},
                 ) from e
 
     async def _generate_pdf_bytes(self, html_content: str, config: PDFConfig) -> bytes:
@@ -104,10 +105,7 @@ class PDFGenerator:
             # WeasyPrint는 블로킹 I/O이므로 별도 스레드에서 실행
             loop = asyncio.get_event_loop()
             pdf_bytes = await loop.run_in_executor(
-                None,
-                self._create_pdf_sync,
-                html_content,
-                config
+                None, self._create_pdf_sync, html_content, config
             )
 
             return pdf_bytes
@@ -115,42 +113,38 @@ class PDFGenerator:
         except Exception as e:
             raise PDFGenerationError(
                 message=f"WeasyPrint PDF 변환 실패: {e!s}",
-                details={"html_length": len(html_content)}
+                details={"html_length": len(html_content)},
             ) from e
 
-    async def generate_pdf_from_html_file(self, html_file_path: str | Path, output_path: str | Path) -> bool:
+    def generate_pdf_from_html_file(
+        self, html_file_path: str | Path, output_path: str | Path
+    ) -> bool:
         """HTML 파일을 직접 PDF로 변환.
-        
+
         Args:
             html_file_path: 입력 HTML 파일 경로
             output_path: 출력 PDF 파일 경로
-            
+
         Returns:
             변환 성공 여부
         """
         try:
             html_file = Path(html_file_path)
             output_file = Path(output_path)
-            
+
             if not html_file.exists():
                 print(f"HTML 파일이 존재하지 않습니다: {html_file}")
                 return False
-                
+
             # HTML 파일을 직접 WeasyPrint로 변환
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                self._convert_html_file_sync,
-                str(html_file),
-                str(output_file)
-            )
-            
+            self._convert_html_file_sync(str(html_file), str(output_file))
+
             return output_file.exists()
-            
+
         except Exception as e:
             print(f"HTML → PDF 변환 실패: {e}")
             return False
-    
+
     def _convert_html_file_sync(self, html_file_path: str, output_path: str) -> None:
         """동기적으로 HTML 파일을 PDF로 변환."""
         html_doc = HTML(filename=html_file_path)
@@ -190,8 +184,7 @@ class PDFGenerator:
 
         except Exception as e:
             raise PDFGenerationError(
-                message=f"WeasyPrint 내부 오류: {e!s}",
-                details={"config": config.model_dump()}
+                message=f"WeasyPrint 내부 오류: {e!s}", details={"config": config.model_dump()}
             ) from e
 
     def save_pdf_to_file(self, pdf_data: bytes, file_path: Path) -> None:
@@ -210,8 +203,7 @@ class PDFGenerator:
 
         except Exception as e:
             raise PDFGenerationError(
-                message=f"PDF 파일 저장 실패: {e!s}",
-                details={"file_path": str(file_path)}
+                message=f"PDF 파일 저장 실패: {e!s}", details={"file_path": str(file_path)}
             ) from e
 
     def validate_html_content(self, html_content: str) -> bool:
@@ -271,7 +263,7 @@ class PDFGenerator:
             if not self.validate_html_content(html_content):
                 raise PDFGenerationError(
                     message="HTML 콘텐츠가 미리보기 생성에 적합하지 않습니다",
-                    details={"html_length": len(html_content)}
+                    details={"html_length": len(html_content)},
                 )
 
             # 형식 정규화 (jpg → JPEG, png → PNG)
@@ -300,8 +292,7 @@ class PDFGenerator:
 
         except Exception as e:
             raise PDFGenerationError(
-                message=f"PDF 미리보기 생성 실패: {e!s}",
-                details={"output_path": str(output_path)}
+                message=f"PDF 미리보기 생성 실패: {e!s}", details={"output_path": str(output_path)}
             ) from e
 
     def _create_preview_image_sync(
@@ -337,12 +328,10 @@ class PDFGenerator:
                 images[0].save(output_path, pil_format)
             else:
                 raise PDFGenerationError(
-                    message="PDF에서 이미지 변환 결과가 없습니다",
-                    details={"format": pil_format}
+                    message="PDF에서 이미지 변환 결과가 없습니다", details={"format": pil_format}
                 )
 
         except Exception as e:
             raise PDFGenerationError(
-                message=f"이미지 렌더링 실패: {e!s}",
-                details={"format": pil_format}
+                message=f"이미지 렌더링 실패: {e!s}", details={"format": pil_format}
             ) from e

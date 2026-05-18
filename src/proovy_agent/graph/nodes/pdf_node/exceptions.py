@@ -30,8 +30,11 @@ class PDFError(Exception):
 class ContentParsingError(PDFError):
     """State.messages 파싱 실패."""
 
-    def __init__(self, message: str = "풀이 내용을 처리하는 중 오류가 발생했습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "풀이 내용을 처리하는 중 오류가 발생했습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
 
     @property
@@ -43,9 +46,12 @@ class ContentParsingError(PDFError):
 class TemplateRenderingError(PDFError):
     """HTML 템플릿 렌더링 실패."""
 
-    def __init__(self, template_name: str = "unknown",
-                 message: str = "PDF 템플릿 처리 중 오류가 발생했습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        template_name: str = "unknown",
+        message: str = "PDF 템플릿 처리 중 오류가 발생했습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
         self.template_name = template_name
 
@@ -58,8 +64,11 @@ class TemplateRenderingError(PDFError):
 class PDFGenerationError(PDFError):
     """HTML → PDF 변환 실패."""
 
-    def __init__(self, message: str = "PDF 파일 생성 중 오류가 발생했습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "PDF 파일 생성 중 오류가 발생했습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
 
     @property
@@ -71,9 +80,12 @@ class PDFGenerationError(PDFError):
 class FileStorageError(PDFError):
     """파일 저장/접근 실패."""
 
-    def __init__(self, file_path: str = "",
-                 message: str = "파일 저장 중 오류가 발생했습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        file_path: str = "",
+        message: str = "파일 저장 중 오류가 발생했습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
         self.file_path = file_path
 
@@ -86,9 +98,12 @@ class FileStorageError(PDFError):
 class PDFConfigurationError(PDFError):
     """PDF 설정 오류."""
 
-    def __init__(self, config_key: str = "",
-                 message: str = "PDF 생성 설정에 오류가 있습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config_key: str = "",
+        message: str = "PDF 생성 설정에 오류가 있습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
         self.config_key = config_key
 
@@ -101,9 +116,12 @@ class PDFConfigurationError(PDFError):
 class PDFValidationError(PDFError):
     """PDF 유효성 검증 실패."""
 
-    def __init__(self, validation_type: str = "general",
-                 message: str = "생성된 PDF 파일에 문제가 있습니다",
-                 details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        validation_type: str = "general",
+        message: str = "생성된 PDF 파일에 문제가 있습니다",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message, details)
         self.validation_type = validation_type
 
@@ -129,34 +147,21 @@ def handle_pdf_error(error: Exception) -> PDFError:
     error_message = str(error)
     error_type = type(error).__name__
 
-    details = {
-        "original_error": error_message,
-        "error_type": error_type
-    }
+    details = {"original_error": error_message, "error_type": error_type}
 
     # 파일 관련 에러
     if "permission" in error_message.lower() or "access" in error_message.lower():
-        return FileStorageError(
-            message="파일 접근 권한 오류가 발생했습니다",
-            details=details
-        )
+        return FileStorageError(message="파일 접근 권한 오류가 발생했습니다", details=details)
 
     # 메모리 관련 에러
     if "memory" in error_message.lower() or "out of memory" in error_message.lower():
         return PDFGenerationError(
-            message="메모리 부족으로 PDF 생성에 실패했습니다",
-            details=details
+            message="메모리 부족으로 PDF 생성에 실패했습니다", details=details
         )
 
     # 템플릿 관련 에러
     if "template" in error_message.lower() or "jinja" in error_message.lower():
-        return TemplateRenderingError(
-            message="템플릿 처리 중 오류가 발생했습니다",
-            details=details
-        )
+        return TemplateRenderingError(message="템플릿 처리 중 오류가 발생했습니다", details=details)
 
     # 기본 PDF 에러로 래핑
-    return PDFError(
-        message=f"알 수 없는 오류가 발생했습니다: {error_message}",
-        details=details
-    )
+    return PDFError(message=f"알 수 없는 오류가 발생했습니다: {error_message}", details=details)

@@ -65,7 +65,7 @@ class TemplateRenderer:
             """섹션 타입별 아이콘 반환."""
             icons = {
                 "text": "TEXT",
-                "math": "MATH", 
+                "math": "MATH",
                 "image": "IMAGE",
                 "code": "CODE",
             }
@@ -83,7 +83,7 @@ class TemplateRenderer:
                 result = []
                 for i, part in enumerate(parts):
                     if i % 2 == 1:  # 코드 블록 내부
-                        result.append(f'<pre><code>{escape(part.strip())}</code></pre>')
+                        result.append(f"<pre><code>{escape(part.strip())}</code></pre>")
                     else:  # 일반 텍스트
                         result.append(part)
                 return "".join(result)
@@ -145,11 +145,11 @@ class TemplateRenderer:
                 return ""  # 이미지 로드 실패 시 빈 문자열 반환
 
         # 필터들을 환경에 등록
-        self.env.filters['format_math'] = format_math
-        self.env.filters['section_icon'] = section_icon
-        self.env.filters['escape_newlines'] = escape_newlines
-        self.env.filters['format_code_block'] = format_code_block
-        self.env.filters['image_to_base64'] = image_to_base64
+        self.env.filters["format_math"] = format_math
+        self.env.filters["section_icon"] = section_icon
+        self.env.filters["escape_newlines"] = escape_newlines
+        self.env.filters["format_code_block"] = format_code_block
+        self.env.filters["image_to_base64"] = image_to_base64
 
     def render_template(self, template_name: str, data: TemplateData) -> str:
         """템플릿을 렌더링하여 HTML 문자열 반환.
@@ -266,6 +266,6 @@ class TemplateRenderer:
             error = TemplateRenderingError(
                 template_name=template_name,
                 message=f"템플릿과 CSS 렌더링 실패: {e!s}",
-                details={"template": template_name, "css": css_file}
+                details={"template": template_name, "css": css_file},
             )
             raise error from e
