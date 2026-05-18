@@ -12,25 +12,16 @@ from proovy_agent.common.sandbox.exceptions import SandboxCreationError
 from proovy_agent.common.sandbox.models import SandboxConfig
 
 
-class FakeResources:
-    def __init__(self, cpu: int, memory: int, disk: int) -> None:
-        self.cpu = cpu
-        self.memory = memory
-        self.disk = disk
-
-
 class FakeCreateSandboxFromSnapshotParams:
     def __init__(
         self,
         snapshot: str,
         labels: dict[str, str],
-        resources: FakeResources,
         auto_stop_interval: int,
         network_block_all: bool,
     ) -> None:
         self.snapshot = snapshot
         self.labels = labels
-        self.resources = resources
         self.auto_stop_interval = auto_stop_interval
         self.network_block_all = network_block_all
 
@@ -84,7 +75,6 @@ class FakeCodeExecutor:
 
 @pytest.fixture(autouse=True)
 def fake_daytona_types(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(manager, "Resources", FakeResources)
     monkeypatch.setattr(
         manager, "CreateSandboxFromSnapshotParams", FakeCreateSandboxFromSnapshotParams
     )
@@ -108,9 +98,6 @@ async def test_create_executor_uses_default_config_from_settings() -> None:
     params = client.created_params[0]
     assert params.snapshot == settings.daytona_snapshot
     assert params.labels == {"thread_id": "thread-123"}
-    assert params.resources.cpu == settings.daytona_sandbox_cpu
-    assert params.resources.memory == settings.daytona_sandbox_memory
-    assert params.resources.disk == settings.daytona_sandbox_disk
     assert params.auto_stop_interval == settings.daytona_auto_stop_interval
     assert params.network_block_all is True
 
@@ -139,11 +126,48 @@ async def test_create_executor_accepts_explicit_config() -> None:
     params = client.created_params[0]
     assert params.snapshot == "custom-snapshot"
     assert params.labels == {"thread_id": "custom-thread"}
-    assert params.resources.cpu == 4
-    assert params.resources.memory == 8
-    assert params.resources.disk == 20
     assert params.auto_stop_interval == 15
     assert params.network_block_all is False
+
+
+async def test_create_executor_does_not_pass_unsupported_snapshot_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StrictSnapshotParams:
+        def __init__(
+            self,
+            *,
+            snapshot: str,
+            labels: dict[str, str],
+            auto_stop_interval: int,
+            network_block_all: bool,
+        ) -> None:
+            self.snapshot = snapshot
+            self.labels = labels
+            self.auto_stop_interval = auto_stop_interval
+            self.network_block_all = network_block_all
+
+    class StrictClient:
+        def __init__(self) -> None:
+            self.created_params: list[StrictSnapshotParams] = []
+            self.sandbox = FakeSandbox()
+
+        async def create(self, params: StrictSnapshotParams) -> FakeSandbox:
+            self.created_params.append(params)
+            return self.sandbox
+
+    monkeypatch.setattr(manager, "CreateSandboxFromSnapshotParams", StrictSnapshotParams)
+    client = StrictClient()
+    sandbox_manager = manager.SandboxManager(client)
+    config = SandboxConfig(snapshot="custom-snapshot", cpu=8, memory=16, disk=30)
+
+    await sandbox_manager.create_executor("thread-with-resources", config=config)
+
+    params = client.created_params[0]
+    assert params.snapshot == "custom-snapshot"
+    assert params.labels == {"thread_id": "thread-with-resources"}
+    assert params.auto_stop_interval == 5
+    assert params.network_block_all is True
 
 
 async def test_create_executor_converts_sdk_errors_to_sandbox_creation_error() -> None:
@@ -230,3 +254,34 @@ async def test_destroy_executor_outer_timeout_returns_without_raising() -> None:
     assert executor.cleanup_started is True
     assert executor.cleaned is False
     assert sandbox.deleted is True
+
+
+async def test_destroy_executor_finishes_delete_when_cancelled_mid_delete() -> None:
+    class SlowDeleteSandbox(FakeSandbox):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delete_started = asyncio.Event()
+            self.delete_can_finish = asyncio.Event()
+            self.delete_completed = False
+
+        async def delete(self) -> None:
+            self.deleted = True
+            self.delete_started.set()
+            await self.delete_can_finish.wait()
+            self.delete_completed = True
+
+    sandbox = SlowDeleteSandbox()
+    executor = FakeCodeExecutor(sandbox, 60, 10_000, "")
+    sandbox_manager = manager.SandboxManager(FakeClient())
+
+    task = asyncio.create_task(sandbox_manager.destroy_executor(executor))
+    await sandbox.delete_started.wait()
+
+    task.cancel()
+    sandbox.delete_can_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert sandbox.deleted is True
+    assert sandbox.delete_completed is True

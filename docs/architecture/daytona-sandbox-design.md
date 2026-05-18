@@ -111,14 +111,16 @@ class RequestExecutorContext:
 
 ### 2.4. 보안 정책
 
-MVP: 기본 Daytona 격리 + 기본 제한. `SandboxConfig`로 오버라이드 가능.
+MVP: 기본 Daytona 격리 + 기본 제한. 실행 시간/출력 제한은 `SandboxConfig`로 오버라이드 가능.
+Daytona SDK v0.173의 `CreateSandboxFromSnapshotParams`는 `resources` 필드를 지원하지 않으므로,
+snapshot 기반 생성에서는 CPU/Memory/Disk를 런타임에 오버라이드하지 않습니다.
 
 | 항목 | MVP 설정 | 이유 |
 |------|---------|------|
 | **네트워크** | `network_block_all=True` | 스냅샷에 패키지 사전 설치 |
 | **실행 시간** | 유형별 timeout | 무한 루프 방지 |
 | **stdout 버퍼** | 10,000자 제한 | OOM 방어 (무한 print 방지) |
-| **리소스** | CPU 2, Mem 2GiB, Disk 5GiB | 기본값, 오버라이드 가능 |
+| **리소스** | snapshot/provider 기본값 | SDK v0.173 snapshot 생성은 런타임 리소스 오버라이드 미지원 |
 
 ### 2.5. 도구 주입 — RunnableConfig + Request Context
 
@@ -347,7 +349,7 @@ create_executor()는 sandbox 생성 + CodeExecutor 래핑을 한 번에 처리�
 """
 import asyncio
 import logging
-from daytona import AsyncDaytona, AsyncSandbox, CreateSandboxFromSnapshotParams, Resources
+from daytona import AsyncDaytona, AsyncSandbox, CreateSandboxFromSnapshotParams
 from .models import SandboxConfig
 from .executor import CodeExecutor
 from .exceptions import SandboxCreationError
@@ -373,7 +375,6 @@ class SandboxManager:
             params = CreateSandboxFromSnapshotParams(
                 snapshot=cfg.snapshot,
                 labels={"thread_id": thread_id},
-                resources=Resources(cpu=cfg.cpu, memory=cfg.memory, disk=cfg.disk),
                 auto_stop_interval=cfg.auto_stop_interval,
                 network_block_all=cfg.network_block_all,
             )
@@ -404,9 +405,14 @@ class SandboxManager:
             except Exception as e:
                 logger.exception(f"executor cleanup 실패: {e}")
             finally:
-                # cleanup 실패와 무관하게 sandbox 삭제는 반드시 시도
+                # cleanup 실패와 무관하게 sandbox 삭제는 반드시 시도합니다.
+                # caller cancellation이 들어와도 delete 작업 자체는 중단하지 않습니다.
+                delete_task = asyncio.create_task(sandbox.delete())
                 try:
-                    await asyncio.wait_for(sandbox.delete(), timeout=5.0)
+                    await asyncio.wait_for(asyncio.shield(delete_task), timeout=5.0)
+                except asyncio.CancelledError:
+                    await asyncio.wait_for(delete_task, timeout=5.0)
+                    raise
                 except Exception as e:
                     logger.warning(f"Sandbox 삭제 실패 (auto_stop이 fallback): {e}")
 
@@ -906,4 +912,3 @@ SandboxGate → sandbox 생성 요청
 | **Phase 2** | Warm Pool | SandboxManager 확장 |
 | **Phase 2** | Orphan Sweeper | auto_stop 보완 (장기 운영용) |
 | **Phase 2** | `ephemeral=True` 전환 | sandbox stop 시 자동 삭제로 orphan 문제 근본 해결 |
-
