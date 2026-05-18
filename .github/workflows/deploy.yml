@@ -1,0 +1,54 @@
+name: Deploy proovy-agent to Cloud Run
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          SHA="${{ github.sha }}"
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.AR_REPO_AGENT }}/${{ secrets.SERVICE_NAME_AGENT }}:${SHA}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ secrets.SERVICE_NAME_AGENT }} \
+            --image "${{ env.IMAGE }}" \
+            --region ${{ secrets.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account proovy-agent-sa@proovy.iam.gserviceaccount.com \
+            --memory 2Gi \
+            --cpu 1 \
+            --timeout 300 \
+            --port 8080 \
+            --set-env-vars "APP_NAME=Proovy Agent,APP_VERSION=0.1.0,DEBUG=false,ALLOWED_ORIGINS=https://proovy.ai.kr,DAYTONA_API_URL=https://app.daytona.io/api,DAYTONA_TARGET=eu,DAYTONA_SNAPSHOT=proovy-math-sandbox,DAYTONA_SANDBOX_CPU=1,DAYTONA_SANDBOX_MEMORY=1,DAYTONA_SANDBOX_DISK=3,DAYTONA_AUTO_STOP_INTERVAL=5,DAYTONA_CODE_TIMEOUT=60,DAYTONA_MAX_OUTPUT_CHARS=10000,SANDBOX_PREAMBLE_NAME=math_v1" \
+            --set-secrets "OPENROUTER_API_KEY=openrouter-api-key:latest,DAYTONA_API_KEY=daytona-api-key:latest,DATABASE_URL=agent-database-url:latest,INTERNAL_API_TOKEN=internal-api-token:latest" \
+            --project ${{ secrets.GCP_PROJECT_ID }}
