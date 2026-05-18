@@ -29,12 +29,7 @@ class PDFConfig(BaseModel):
 
     page_size: str = "A4"
     margin: dict[str, str] = Field(
-        default_factory=lambda: {
-            "top": "2cm",
-            "bottom": "2cm",
-            "left": "2cm",
-            "right": "2cm"
-        }
+        default_factory=lambda: {"top": "2cm", "bottom": "2cm", "left": "2cm", "right": "2cm"}
     )
     dpi: int = 300
     optimize_images: bool = True
@@ -83,7 +78,7 @@ class PDFRequest(BaseModel):
 
     def to_template_data(self) -> "TemplateData":
         """PDFRequest를 TemplateData로 변환.
-        
+
         Returns:
             템플릿 렌더링에 사용할 TemplateData 인스턴스
         """
@@ -91,12 +86,12 @@ class PDFRequest(BaseModel):
         title = "이차방정식 해법 테스트"
         if self.content_sections and self.content_sections[0].title:
             title = self.content_sections[0].title
-        
+
         return TemplateData(
             title=title,
             thread_id=self.thread_id,
             user_id=self.user_id,
-            sections=self.content_sections
+            sections=self.content_sections,
         )
 
 
@@ -117,7 +112,7 @@ class PDFResult(BaseModel):
     @classmethod
     def file_size_positive(cls, v: int, values) -> int:
         """파일 크기가 양수인지 검증 (실패 시에는 0 허용)."""
-        success = values.data.get('success', True)
+        success = values.data.get("success", True)
         if not success and v == 0:
             return v  # 실패 시 file_size=0 허용
         if v <= 0:

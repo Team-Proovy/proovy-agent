@@ -63,7 +63,9 @@ class ContentParser:
 
             # 2. 메인 풀이 내용 파싱 (content)
             if content_messages:
-                content_sections = await self._parse_content_messages(content_messages, current_order)
+                content_sections = await self._parse_content_messages(
+                    content_messages, current_order
+                )
                 sections.extend(content_sections)
                 current_order += len(content_sections)
 
@@ -98,7 +100,9 @@ class ContentParser:
                 filtered.append(msg)
         return filtered
 
-    async def _parse_content_messages(self, messages: list[AnyMessage], start_order: int) -> list[ContentSection]:
+    async def _parse_content_messages(
+        self, messages: list[AnyMessage], start_order: int
+    ) -> list[ContentSection]:
         """content 태그를 가진 메시지들을 파싱하여 섹션 생성."""
         sections = []
 
@@ -115,7 +119,7 @@ class ContentParser:
                 title="문제 풀이",
                 content_type=self._detect_content_type(full_content),
                 content=full_content.strip(),
-                order=start_order
+                order=start_order,
             )
             sections.append(section)
 
@@ -147,14 +151,16 @@ class ContentParser:
 
         # 첫 번째 분할 전 내용 (문제 설명 등)
         if split_positions[0][0] > 0:
-            intro_content = content[:split_positions[0][0]].strip()
+            intro_content = content[: split_positions[0][0]].strip()
             if intro_content:
-                sections.append(ContentSection(
-                    title="문제 분석",
-                    content_type=self._detect_content_type(intro_content),
-                    content=intro_content,
-                    order=start_order + len(sections)
-                ))
+                sections.append(
+                    ContentSection(
+                        title="문제 분석",
+                        content_type=self._detect_content_type(intro_content),
+                        content=intro_content,
+                        order=start_order + len(sections),
+                    )
+                )
 
         # 각 단계별 내용 추출
         for i, (pos, step_marker) in enumerate(split_positions):
@@ -166,12 +172,14 @@ class ContentParser:
                 # 단계 제목 생성
                 step_title = self._generate_step_title(step_marker, i + 1)
 
-                sections.append(ContentSection(
-                    title=step_title,
-                    content_type=self._detect_content_type(step_content),
-                    content=step_content,
-                    order=start_order + len(sections)
-                ))
+                sections.append(
+                    ContentSection(
+                        title=step_title,
+                        content_type=self._detect_content_type(step_content),
+                        content=step_content,
+                        order=start_order + len(sections),
+                    )
+                )
 
         return sections
 
@@ -183,7 +191,11 @@ class ContentParser:
             return "1단계: 문제 접근"
         elif "다음" in step_marker_lower or "둘째" in step_marker_lower:
             return f"{step_number}단계: 풀이 진행"
-        elif "마지막" in step_marker_lower or "결론" in step_marker_lower or "따라서" in step_marker_lower:
+        elif (
+            "마지막" in step_marker_lower
+            or "결론" in step_marker_lower
+            or "따라서" in step_marker_lower
+        ):
             return "최종단계: 결론 도출"
         elif "검증" in step_marker_lower or "확인" in step_marker_lower:
             return "검증단계: 답안 확인"
@@ -201,26 +213,26 @@ class ContentParser:
         # 코드 블록 확인 (최우선)
         if "```" in content or "def " in content or "import " in content:
             return "code"
-        
+
         # 이미지 참조 확인
         for pattern in self.image_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 return "image"
-        
+
         # 수식 위주 내용인지 확인 (더 엄격한 조건)
         math_count = 0
-        text_lines = content.split('\n')
+        text_lines = content.split("\n")
         total_lines = len(text_lines)
-        
+
         for line in text_lines:
             line = line.strip()
             if not line:
                 continue
             # 수식 기호가 많거나 LaTeX 형식이면 math
             math_symbols = sum(1 for pattern in self.math_patterns if re.search(pattern, line))
-            if math_symbols > 2 or any(pattern in line for pattern in [r'\(', r'\[', '$']):
+            if math_symbols > 2 or any(pattern in line for pattern in [r"\(", r"\[", "$"]):
                 math_count += 1
-        
+
         # 전체 라인의 절반 이상이 수식이면 math 타입
         if total_lines > 0 and math_count / total_lines > 0.5:
             return "math"
@@ -236,7 +248,7 @@ class ContentParser:
             content_type="text",
             content=progress_content,
             order=order,
-            metadata={"source": "progress"}
+            metadata={"source": "progress"},
         )
 
     def _create_tool_section(self, messages: list[AnyMessage], order: int) -> ContentSection:
@@ -256,7 +268,7 @@ class ContentParser:
             content_type="code",
             content=combined_content,
             order=order,
-            metadata={"source": "tool"}
+            metadata={"source": "tool"},
         )
 
     def _create_fallback_section(self, messages: list[AnyMessage]) -> ContentSection:
@@ -274,5 +286,5 @@ class ContentParser:
             content_type="text",
             content="\n\n".join(all_content),
             order=0,
-            metadata={"source": "fallback", "warning": "자동 파싱 실패로 원본 메시지 사용"}
+            metadata={"source": "fallback", "warning": "자동 파싱 실패로 원본 메시지 사용"},
         )
