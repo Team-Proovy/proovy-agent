@@ -22,10 +22,8 @@ coverage.xml
 .DS_Store
 
 # Development
-.env
-.env.local
-.env.development
-.env.test
+.env*
+!.env.example
 .vscode
 .idea
 *.swp

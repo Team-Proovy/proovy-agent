@@ -24,6 +24,8 @@ RUN uv sync --frozen
 
 # Cloud Run이 PORT 환경변수를 주입함 (기본 8080)
 ENV PORT=8080
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 
 # FastAPI 서버 실행 — Cloud Run이 주는 $PORT 포트로 바인딩
