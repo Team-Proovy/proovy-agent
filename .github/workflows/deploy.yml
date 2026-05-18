@@ -49,6 +49,8 @@ jobs:
             --cpu 1 \
             --timeout 300 \
             --port 8080 \
+            --min-instances 0 \
+            --max-instances 3 \
             --set-env-vars "APP_NAME=Proovy Agent,APP_VERSION=0.1.0,DEBUG=false,ALLOWED_ORIGINS=https://proovy.ai.kr,DAYTONA_API_URL=https://app.daytona.io/api,DAYTONA_TARGET=eu,DAYTONA_SNAPSHOT=proovy-math-sandbox,DAYTONA_SANDBOX_CPU=1,DAYTONA_SANDBOX_MEMORY=1,DAYTONA_SANDBOX_DISK=3,DAYTONA_AUTO_STOP_INTERVAL=5,DAYTONA_CODE_TIMEOUT=60,DAYTONA_MAX_OUTPUT_CHARS=10000,SANDBOX_PREAMBLE_NAME=math_v1" \
             --set-secrets "OPENROUTER_API_KEY=openrouter-api-key:latest,DAYTONA_API_KEY=daytona-api-key:latest,DATABASE_URL=agent-database-url:latest,INTERNAL_API_TOKEN=internal-api-token:latest" \
             --project ${{ secrets.GCP_PROJECT_ID }}
