@@ -10,7 +10,7 @@ class MockState:
             setattr(self, key, value)
 
 
-def test_pdf_node_basic():
+def test_pdf_node_basic() -> bool:
     """PDFNode 기본 테스트."""
     print("PDFNode 기본 테스트 시작...")
 
