@@ -11,8 +11,8 @@ from sse_starlette.sse import EventSourceResponse
 from proovy_agent.app.schemas.solve import SolveRequest
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.emitter import SSEEmitter
-from proovy_agent.graph.agents.core_solver.agent import core_solver
-from proovy_agent.graph.state import PlanStep, ProovyState
+from proovy_agent.graph.builder import get_graph
+from proovy_agent.graph.state import ProovyState
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,13 +24,10 @@ _active_tasks: set[asyncio.Task[None]] = set()
 def _build_initial_state(request: SolveRequest) -> ProovyState:
     thread_id = request.thread_id or str(uuid.uuid4())
     return ProovyState(
+        raw_input={"problem": request.problem},
         user_id=request.user_id,
         thread_id=thread_id,
         messages=[HumanMessage(content=request.problem)],
-        plan=[PlanStep(action="solve", description=request.problem, status="running")],
-        executing_step_idx=0,
-        selected_model="sonnet",
-        difficulty="medium",
     )
 
 
@@ -43,11 +40,7 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     async def _run() -> None:
         token = current_emitter.set(emitter)
         try:
-            await emitter.emit(
-                "page_start",
-                {"thread_id": state.thread_id, "use_page": state.use_page},
-            )
-            await core_solver(state)
+            await get_graph().ainvoke(state)
         except Exception:
             logger.exception("solve 실행 중 오류 발생")
             await emitter.emit("error", {"message": "풀이 중 오류가 발생했습니다."})
