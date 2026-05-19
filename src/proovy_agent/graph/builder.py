@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from langgraph.graph import END, START, StateGraph
 
 from proovy_agent.graph.state import ProovyState
 
-_graph: StateGraph | None = None
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
+_graph: CompiledStateGraph | None = None
 
 
-def get_graph() -> StateGraph:
+def get_graph() -> CompiledStateGraph:
     """그래프를 처음 호출 시 빌드하고 이후에는 캐시를 반환합니다."""
     global _graph
     if _graph is None:
@@ -17,7 +22,7 @@ def get_graph() -> StateGraph:
     return _graph
 
 
-def _build() -> StateGraph:
+def _build() -> CompiledStateGraph:
     from proovy_agent.graph.agents.core_solver.agent import core_solver
     from proovy_agent.graph.nodes.credit_settler import credit_settler
     from proovy_agent.graph.nodes.general_node import general_node

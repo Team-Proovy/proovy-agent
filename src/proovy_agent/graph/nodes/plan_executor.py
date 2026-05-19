@@ -29,6 +29,9 @@ async def plan_executor(state: ProovyState) -> Command | list[Send]:
     ready = _find_ready_steps(plan)
 
     if not ready:
+        if any(s.status == "running" for s in plan):
+            # 병렬 브랜치가 아직 실행 중 — 해당 태스크만 종료하고 대기
+            return Command(update={})
         return Command(goto="credit_settler")
 
     if len(ready) == 1:
