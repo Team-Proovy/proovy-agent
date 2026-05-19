@@ -39,9 +39,9 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
     emitter = SSEEmitter()
     state = _build_initial_state(request)
-    token = current_emitter.set(emitter)
 
     async def _run() -> None:
+        token = current_emitter.set(emitter)
         try:
             await emitter.emit(
                 "page_start",
