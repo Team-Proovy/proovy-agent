@@ -1,0 +1,236 @@
+"""CoreSolver 에이전트 — 2-Phase 수학 풀이 (verify → explain)."""
+
+from __future__ import annotations
+
+import logging
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from proovy_agent.common.llm.client import get_llm
+from proovy_agent.common.sandbox.client import get_daytona_client
+from proovy_agent.common.sandbox.executor_var import current_executor
+from proovy_agent.common.sandbox.manager import SandboxManager
+from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
+from proovy_agent.graph.tools.code_execute import code_execute
+from proovy_agent.graph.tools.code_generate import code_generate
+
+logger = logging.getLogger(__name__)
+
+_TOOLS = [code_generate, code_execute]
+_TOOLS_BY_NAME = {t.name: t for t in _TOOLS}
+
+_MODEL_COST: dict[str, float] = {"flash": 1.0, "sonnet": 3.0, "opus": 8.0}
+_MAX_ITERATIONS = 5
+_TRIM_THRESHOLD = 500
+
+
+def _build_verify_system(state: ProovyState) -> str:
+    step_desc = "수학 문제 풀이"
+    if state.plan and state.executing_step_idx < len(state.plan):
+        step_desc = state.plan[state.executing_step_idx].description
+
+    return (
+        "당신은 Proovy의 수학 전문 AI입니다. 풀이 후 반드시 코드로 검증하세요.\n\n"
+        f"이번 단계의 목표: {step_desc}\n"
+        f"난이도: {state.difficulty}\n\n"
+        "단계:\n"
+        "1. 문제를 분석하고 풀이 방향을 결정합니다.\n"
+        "2. code_generate 도구로 검증 코드를 생성합니다.\n"
+        "3. code_execute 도구로 코드를 실행해 결과를 검증합니다.\n"
+        "4. 검증이 완료되면 내부 검증 결과를 요약합니다.\n\n"
+        f"검증 실패 시 다른 접근 방식으로 재시도하세요 (최대 {_MAX_ITERATIONS}회)."
+    )
+
+
+def _build_explain_system(state: ProovyState, verified_summary: str) -> str:
+    return (
+        "당신은 Proovy의 수학 전문 AI입니다.\n"
+        "아래 검증된 풀이를 바탕으로 학생이 이해하기 쉽게 단계별로 설명하세요.\n\n"
+        f"[검증된 풀이 요약]\n{verified_summary}\n\n"
+        f"난이도: {state.difficulty}\n\n"
+        "규칙:\n"
+        "- 검증된 내용만 설명합니다. 추측하지 마세요.\n"
+        "- 공식, 계산 과정, 결론을 명확히 제시합니다.\n"
+        "- 자연스럽고 단계적으로 설명합니다."
+    )
+
+
+def _trim_tool_messages(messages: list) -> list:
+    """LLM 전달 직전 긴 ToolMessage를 잘라냅니다. State 원본은 유지됩니다."""
+    trimmed = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and len(str(msg.content)) > _TRIM_THRESHOLD:
+            msg = msg.model_copy(
+                update={"content": str(msg.content)[:_TRIM_THRESHOLD] + "... [TRIMMED]"}
+            )
+        trimmed.append(msg)
+    return trimmed
+
+
+async def _phase1_verify(
+    state: ProovyState,
+    emitter: object | None,
+) -> tuple[str, list, int]:
+    """Phase 1: 내부 풀이 + 코드 검증. (verified_summary, new_messages, execute_count) 반환."""
+    llm = get_llm(state.selected_model)
+    llm_with_tools = llm.bind_tools(_TOOLS)
+
+    system_msg = SystemMessage(_build_verify_system(state))
+    messages: list = list(state.messages)
+    execute_count = 0
+
+    if emitter:
+        await emitter.emit(
+            "solve_progress",
+            {"text": "수학 문제를 분석하고 코드로 검증하는 중입니다..."},
+        )
+
+    for iteration in range(_MAX_ITERATIONS):
+        trimmed = _trim_tool_messages(messages)
+        response = await llm_with_tools.ainvoke([system_msg, *trimmed])
+        messages.append(response)
+
+        if not response.tool_calls:
+            # 도구 호출 없음 → LLM이 검증 완료 판단
+            content = response.content
+            if isinstance(content, list):
+                content = "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            return str(content), messages, execute_count
+
+        # 도구 호출 실행
+        for tool_call in response.tool_calls:
+            tool_name = tool_call["name"]
+            tool = _TOOLS_BY_NAME.get(tool_name)
+            if tool is None:
+                result = f"Unknown tool: {tool_name}"
+            else:
+                try:
+                    result = await tool.ainvoke(tool_call["args"])
+                    if tool_name == "code_execute":
+                        execute_count += 1
+                except Exception as exc:
+                    result = f"Tool error: {exc}"
+
+            messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
+
+        if emitter and iteration > 0:
+            await emitter.emit(
+                "solve_progress",
+                {"text": f"검증 재시도 중... ({iteration + 1}/{_MAX_ITERATIONS})"},
+            )
+
+    # 최대 반복 도달 — 마지막 AI 메시지를 결과로 사용
+    last_ai = next(
+        (m for m in reversed(messages) if isinstance(m, AIMessage) and not m.tool_calls),
+        None,
+    )
+    summary = str(last_ai.content) if last_ai else "검증 결과를 확인하지 못했습니다."
+    return summary, messages, execute_count
+
+
+async def _phase2_explain(
+    state: ProovyState,
+    verified_summary: str,
+    emitter: object | None,
+) -> AIMessage:
+    """Phase 2: 검증된 결과 기반 설명 스트리밍."""
+    llm = get_llm(state.selected_model)
+    system_msg = SystemMessage(_build_explain_system(state, verified_summary))
+
+    user_messages = [m for m in state.messages if isinstance(m, HumanMessage)]
+
+    content_chunks: list[str] = []
+    async for chunk in llm.astream([system_msg, *user_messages]):
+        chunk_content = chunk.content
+        if isinstance(chunk_content, list):
+            chunk_content = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in chunk_content
+            )
+        if chunk_content:
+            if emitter:
+                await emitter.emit("token", {"content": chunk_content})
+            content_chunks.append(chunk_content)
+
+    return AIMessage(
+        content="".join(content_chunks),
+        metadata={"display": "content"},
+    )
+
+
+async def core_solver(state: ProovyState) -> dict:
+    """CoreSolver LangGraph 노드."""
+    emitter = current_emitter.get()
+    manager = SandboxManager(get_daytona_client())
+    executor = await manager.create_executor(state.thread_id or "default")
+    executor_token = current_executor.set(executor)
+
+    new_messages: list = []
+    credit_entries: list[CreditEntry] = []
+
+    try:
+        # Phase 1: verify
+        verified_summary, p1_messages, execute_count = await _phase1_verify(state, emitter)
+
+        # Phase 1 결과를 messages에 추가 (progress 태그)
+        if p1_messages:
+            last_ai = next(
+                (m for m in reversed(p1_messages) if isinstance(m, AIMessage) and not m.tool_calls),
+                None,
+            )
+            if last_ai:
+                new_messages.append(
+                    AIMessage(
+                        content=last_ai.content,
+                        metadata={"display": "progress"},
+                    )
+                )
+
+        # Phase 2: explain
+        explain_msg = await _phase2_explain(state, verified_summary, emitter)
+        new_messages.append(explain_msg)
+
+        # 크레딧 기록
+        model_cost = _MODEL_COST.get(state.selected_model, 1.0)
+        credit_entries.append(
+            CreditEntry(
+                node="core_solver",
+                action="llm_call",
+                model=state.selected_model,
+                cost=model_cost,
+            )
+        )
+        for _ in range(execute_count):
+            credit_entries.append(CreditEntry(node="core_solver", action="code_execute", cost=1.0))
+
+    except Exception:
+        logger.exception("CoreSolver 실행 중 오류 발생")
+        if emitter:
+            await emitter.emit(
+                "error", {"message": "풀이 중 오류가 발생했습니다. 다시 시도해 주세요."}
+            )
+        raise
+    finally:
+        current_executor.reset(executor_token)
+        await manager.destroy_executor(executor)
+
+    # plan 상태 업데이트
+    plan = list(state.plan)
+    if plan and state.executing_step_idx < len(plan):
+        step = plan[state.executing_step_idx]
+        plan[state.executing_step_idx] = PlanStep(
+            action=step.action,
+            description=step.description,
+            status="done",
+        )
+
+    return {
+        "messages": new_messages,
+        "credit_log": credit_entries,
+        "current_phase": "explain",
+        "plan": plan,
+    }
