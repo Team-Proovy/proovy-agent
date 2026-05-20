@@ -42,18 +42,21 @@ async def plan_executor(state: ProovyState) -> Command | list[Send]:
             goto=_ACTION_TO_NODE[step.action],
         )
 
-    # 복수 ready → Send API로 병렬 실행
+    # 복수 ready → Command + Send API로 병렬 실행
     for idx, step in ready:
         plan[idx] = step.model_copy(update={"status": "running"})
 
-    return [
-        Send(
-            _ACTION_TO_NODE[step.action],
-            {
-                **state.model_dump(),
-                "plan": [s.model_dump() for s in plan],
-                "executing_step_idx": idx,
-            },
-        )
-        for idx, step in ready
-    ]
+    return Command(
+        update={"plan": plan},
+        goto=[
+            Send(
+                _ACTION_TO_NODE[step.action],
+                {
+                    **state.model_dump(),
+                    "plan": [s.model_dump() for s in plan],
+                    "executing_step_idx": idx,
+                },
+            )
+            for idx, step in ready
+        ],
+    )

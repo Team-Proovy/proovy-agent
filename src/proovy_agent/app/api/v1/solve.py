@@ -1,6 +1,7 @@
 """문제 풀이 API 엔드포인트."""
 
 import asyncio
+from collections.abc import AsyncGenerator
 import logging
 import uuid
 
@@ -41,6 +42,8 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
         token = current_emitter.set(emitter)
         try:
             await get_graph().ainvoke(state)
+        except asyncio.CancelledError:
+            logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception:
             logger.exception("solve 실행 중 오류 발생")
             await emitter.emit("error", {"message": "풀이 중 오류가 발생했습니다."})
@@ -48,8 +51,16 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
             await emitter.close()
             current_emitter.reset(token)
 
-    task: asyncio.Task[None] = asyncio.create_task(_run())
-    _active_tasks.add(task)
-    task.add_done_callback(_active_tasks.discard)
+    async def _stream() -> AsyncGenerator:
+        task: asyncio.Task[None] = asyncio.create_task(_run())
+        _active_tasks.add(task)
+        task.add_done_callback(_active_tasks.discard)
+        try:
+            async for event in emitter.stream():
+                yield event
+        finally:
+            # 클라이언트 disconnect 시 백그라운드 태스크 취소
+            if not task.done():
+                task.cancel()
 
-    return EventSourceResponse(emitter.stream())
+    return EventSourceResponse(_stream())

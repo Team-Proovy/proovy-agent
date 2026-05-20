@@ -68,17 +68,30 @@ def _trim_tool_messages(messages: list) -> list:
     return trimmed
 
 
+def _code_execute_succeeded(result: str) -> bool:
+    """code_execute 결과 문자열에서 성공 여부를 판단합니다."""
+    return "exit_code: 1" not in result and "error:" not in result.lower()
+
+
 async def _phase1_verify(
     state: ProovyState,
     emitter: object | None,
-) -> tuple[str, list, int]:
-    """Phase 1: 내부 풀이 + 코드 검증. (verified_summary, new_messages, execute_count) 반환."""
+) -> tuple[str, list, int, bool, int, int]:
+    """Phase 1: 내부 풀이 + 코드 검증.
+
+    Returns:
+        (verified_summary, new_messages, execute_count, verified, llm_call_count, codegen_count)
+        verified: 최소 1회 code_execute 성공 여부
+    """
     llm = get_llm(state.selected_model)
     llm_with_tools = llm.bind_tools(_TOOLS)
 
     system_msg = SystemMessage(_build_verify_system(state))
     messages: list = list(state.messages)
     execute_count = 0
+    codegen_count = 0
+    llm_call_count = 0
+    verified = False
 
     if emitter:
         await emitter.emit(
@@ -89,19 +102,19 @@ async def _phase1_verify(
     for iteration in range(_MAX_ITERATIONS):
         trimmed = _trim_tool_messages(messages)
         response = await llm_with_tools.ainvoke([system_msg, *trimmed])
+        llm_call_count += 1
         messages.append(response)
 
         if not response.tool_calls:
-            # 도구 호출 없음 → LLM이 검증 완료 판단
+            # 도구 호출 없이 LLM이 응답 → 검증 없이 종료
             content = response.content
             if isinstance(content, list):
                 content = "".join(
                     block.get("text", "") if isinstance(block, dict) else str(block)
                     for block in content
                 )
-            return str(content), messages, execute_count
+            return str(content), messages, execute_count, verified, llm_call_count, codegen_count
 
-        # 도구 호출 실행
         for tool_call in response.tool_calls:
             tool_name = tool_call["name"]
             tool = _TOOLS_BY_NAME.get(tool_name)
@@ -110,8 +123,12 @@ async def _phase1_verify(
             else:
                 try:
                     result = await tool.ainvoke(tool_call["args"])
-                    if tool_name == "code_execute":
+                    if tool_name == "code_generate":
+                        codegen_count += 1
+                    elif tool_name == "code_execute":
                         execute_count += 1
+                        if _code_execute_succeeded(str(result)):
+                            verified = True
                 except Exception as exc:
                     result = f"Tool error: {exc}"
 
@@ -129,7 +146,7 @@ async def _phase1_verify(
         None,
     )
     summary = str(last_ai.content) if last_ai else "검증 결과를 확인하지 못했습니다."
-    return summary, messages, execute_count
+    return summary, messages, execute_count, verified, llm_call_count, codegen_count
 
 
 async def _phase2_explain(
@@ -174,7 +191,21 @@ async def core_solver(state: ProovyState) -> dict:
 
     try:
         # Phase 1: verify
-        verified_summary, p1_messages, execute_count = await _phase1_verify(state, emitter)
+        (
+            verified_summary,
+            p1_messages,
+            execute_count,
+            verified,
+            llm_call_count,
+            codegen_count,
+        ) = await _phase1_verify(state, emitter)
+
+        # 최소 1회 code_execute 성공 필수 (Proof by Code 원칙)
+        if not verified:
+            err_msg = "코드 검증에 실패했습니다. 풀이를 확인할 수 없습니다."
+            if emitter:
+                await emitter.emit("error", {"message": err_msg})
+            raise RuntimeError(err_msg)
 
         # Phase 1 결과를 messages에 추가 (progress 태그)
         if p1_messages:
@@ -194,16 +225,31 @@ async def core_solver(state: ProovyState) -> dict:
         explain_msg = await _phase2_explain(state, verified_summary, emitter)
         new_messages.append(explain_msg)
 
-        # 크레딧 기록
+        # 크레딧: Phase 1 LLM 반복 횟수
         model_cost = _MODEL_COST.get(state.selected_model, 1.0)
         credit_entries.append(
             CreditEntry(
                 node="core_solver",
-                action="llm_call",
+                action="llm_call_verify",
+                model=state.selected_model,
+                cost=model_cost * llm_call_count,
+            )
+        )
+        # Phase 2 LLM 호출
+        credit_entries.append(
+            CreditEntry(
+                node="core_solver",
+                action="llm_call_explain",
                 model=state.selected_model,
                 cost=model_cost,
             )
         )
+        # code_generate Flash 호출 (도구 내부 LLM)
+        for _ in range(codegen_count):
+            credit_entries.append(
+                CreditEntry(node="core_solver", action="code_generate", model="flash", cost=1.0)
+            )
+        # code_execute Daytona 실행
         for _ in range(execute_count):
             credit_entries.append(CreditEntry(node="core_solver", action="code_execute", cost=1.0))
 

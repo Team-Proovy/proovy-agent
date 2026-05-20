@@ -1,4 +1,4 @@
-"""Planner 노드 — plan 생성 + 모델/난이도 선택."""
+"""Planner 노드 — plan 생성 + 난이도 선택 (모델 매핑은 코드에서 관리)."""
 
 from typing import Literal
 
@@ -7,7 +7,14 @@ from pydantic import BaseModel
 
 from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sse.context import current_emitter
-from proovy_agent.graph.state import PlanStep, ProovyState
+from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
+
+# difficulty → selected_model 매핑은 운영 정책이므로 코드에서 관리
+_DIFFICULTY_TO_MODEL: dict[str, str] = {
+    "easy": "flash",
+    "medium": "sonnet",
+    "hard": "opus",
+}
 
 _SYSTEM = """당신은 수학 문제 풀이 계획을 세우는 Planner입니다.
 사용자 메시지를 분석하여 JSON 형식으로 풀이 계획을 작성하세요.
@@ -22,11 +29,6 @@ difficulty 기준:
 - medium: 방정식, 확률/통계 기초, 수열
 - hard: 미적분, 선형대수, 고급 통계, 증명
 
-selected_model 기준:
-- flash → easy
-- sonnet → medium
-- opus → hard
-
 use_page: 이미지·그래프·코드 포함 예상이면 true, 짧은 풀이면 false"""
 
 
@@ -38,7 +40,6 @@ class _StepInput(BaseModel):
 class _PlannerOutput(BaseModel):
     steps: list[_StepInput]
     difficulty: Literal["easy", "medium", "hard"]
-    selected_model: Literal["flash", "sonnet", "opus"]
     use_page: bool
 
 
@@ -48,6 +49,7 @@ async def planner(state: ProovyState) -> dict:
     result = await structured.ainvoke([SystemMessage(_SYSTEM), *state.messages])
 
     plan = [PlanStep(action=s.action, description=s.description) for s in result.steps]
+    selected_model = _DIFFICULTY_TO_MODEL[result.difficulty]
 
     emitter = current_emitter.get()
     if emitter and result.use_page:
@@ -56,6 +58,7 @@ async def planner(state: ProovyState) -> dict:
     return {
         "plan": plan,
         "difficulty": result.difficulty,
-        "selected_model": result.selected_model,
+        "selected_model": selected_model,
         "use_page": result.use_page,
+        "credit_log": [CreditEntry(node="planner", action="llm_call", model="flash", cost=1.0)],
     }

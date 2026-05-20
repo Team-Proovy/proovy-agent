@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage
 from pydantic import BaseModel
 
 from proovy_agent.common.llm.client import get_llm
-from proovy_agent.graph.state import ProovyState
+from proovy_agent.graph.state import CreditEntry, ProovyState
 
 _SYSTEM = """당신은 사용자 메시지를 분류하는 분류기입니다.
 메시지가 수학 문제 풀이 요청이면 'math_task', 일반 대화면 'general_chat'으로 분류하세요.
@@ -23,7 +23,10 @@ async def router(state: ProovyState) -> dict:
     llm = get_llm("flash")
     structured = llm.with_structured_output(_RouterOutput)
     result = await structured.ainvoke([SystemMessage(_SYSTEM), *state.messages])
-    return {"route": result.route}
+    return {
+        "route": result.route,
+        "credit_log": [CreditEntry(node="router", action="llm_call", model="flash", cost=1.0)],
+    }
 
 
 def router_edge(state: ProovyState) -> str:
