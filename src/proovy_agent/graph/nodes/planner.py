@@ -49,6 +49,10 @@ async def planner(state: ProovyState) -> dict:
     result = await structured.ainvoke([SystemMessage(_SYSTEM), *state.messages])
 
     plan = [PlanStep(action=s.action, description=s.description) for s in result.steps]
+
+    if not any(s.action == "solve" for s in plan):
+        plan.insert(0, PlanStep(action="solve", description="수학 문제 풀이"))
+
     selected_model = _DIFFICULTY_TO_MODEL[result.difficulty]
 
     emitter = current_emitter.get()

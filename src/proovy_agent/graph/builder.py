@@ -63,8 +63,8 @@ def _build() -> CompiledStateGraph:
         from proovy_agent.graph.nodes.pdf_node.pdf_node import PDFNode
 
         pdf_node = _pdf_step_done_wrapper(PDFNode())
-    except Exception:
-        logging.getLogger(__name__).warning("PDFNode 로드 실패 — 스텁으로 대체합니다.")
+    except (ImportError, ModuleNotFoundError) as e:
+        logging.getLogger(__name__).warning("PDFNode 로드 실패 — 스텁으로 대체합니다. 원인: %s", e)
         pdf_node = _pdf_stub
 
     builder = StateGraph(ProovyState)

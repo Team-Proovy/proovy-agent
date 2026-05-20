@@ -40,6 +40,7 @@ def test_valid_request_returns_sse_stream(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "text/event-stream" in response.headers.get("content-type", "")
+    mock_graph.ainvoke.assert_awaited_once()
 
 
 def test_thread_id_auto_generated(client: TestClient) -> None:
@@ -54,3 +55,6 @@ def test_thread_id_auto_generated(client: TestClient) -> None:
         )
 
     assert response.status_code == 200
+    mock_graph.ainvoke.assert_awaited_once()
+    passed_state = mock_graph.ainvoke.call_args.args[0]
+    assert passed_state.thread_id

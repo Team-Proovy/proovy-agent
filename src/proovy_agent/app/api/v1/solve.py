@@ -44,9 +44,10 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
             await get_graph().ainvoke(state)
         except asyncio.CancelledError:
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
-        except Exception:
+        except Exception as exc:
             logger.exception("solve 실행 중 오류 발생")
-            await emitter.emit("error", {"message": "풀이 중 오류가 발생했습니다."})
+            if not getattr(exc, "sse_emitted", False):
+                await emitter.emit("error", {"message": "풀이 중 오류가 발생했습니다."})
         finally:
             await emitter.close()
             current_emitter.reset(token)

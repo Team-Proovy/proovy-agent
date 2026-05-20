@@ -13,7 +13,7 @@ def _state(entries: list[CreditEntry]) -> ProovyState:
 
 
 @pytest.mark.asyncio
-async def test_sums_total_credit():
+async def test_sums_total_credit() -> None:
     state = _state(
         [
             CreditEntry(node="core_solver", action="llm_call_verify", model="flash", cost=2.0),
@@ -25,7 +25,7 @@ async def test_sums_total_credit():
 
 
 @pytest.mark.asyncio
-async def test_emits_credit_settled_event():
+async def test_emits_credit_settled_event() -> None:
     emitter = SSEEmitter()
     token = current_emitter.set(emitter)
     try:
@@ -39,13 +39,13 @@ async def test_emits_credit_settled_event():
 
 
 @pytest.mark.asyncio
-async def test_no_emitter_does_not_raise():
+async def test_no_emitter_does_not_raise() -> None:
     state = _state([CreditEntry(node="x", action="a", cost=1.0)])
     result = await credit_settler(state)
     assert result["total_credit_cost"] == 1.0
 
 
 @pytest.mark.asyncio
-async def test_empty_log_total_is_zero():
+async def test_empty_log_total_is_zero() -> None:
     result = await credit_settler(_state([]))
     assert result["total_credit_cost"] == 0.0

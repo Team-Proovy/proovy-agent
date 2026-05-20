@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -70,7 +71,10 @@ def _trim_tool_messages(messages: list) -> list:
 
 def _code_execute_succeeded(result: str) -> bool:
     """code_execute 결과 문자열에서 성공 여부를 판단합니다."""
-    return "exit_code: 1" not in result and "error:" not in result.lower()
+    if "error:" in result.lower():
+        return False
+    m = re.search(r"exit_code:\s*(-?\d+)", result)
+    return not (m and int(m.group(1)) != 0)
 
 
 async def _phase1_verify(
@@ -205,7 +209,9 @@ async def core_solver(state: ProovyState) -> dict:
             err_msg = "코드 검증에 실패했습니다. 풀이를 확인할 수 없습니다."
             if emitter:
                 await emitter.emit("error", {"message": err_msg})
-            raise RuntimeError(err_msg)
+            _exc = RuntimeError(err_msg)
+            _exc.sse_emitted = True  # type: ignore[attr-defined]
+            raise _exc
 
         # Phase 1 결과를 messages에 추가 (progress 태그)
         if p1_messages:
@@ -253,12 +259,13 @@ async def core_solver(state: ProovyState) -> dict:
         for _ in range(execute_count):
             credit_entries.append(CreditEntry(node="core_solver", action="code_execute", cost=1.0))
 
-    except Exception:
+    except Exception as exc:
         logger.exception("CoreSolver 실행 중 오류 발생")
-        if emitter:
+        if emitter and not getattr(exc, "sse_emitted", False):
             await emitter.emit(
                 "error", {"message": "풀이 중 오류가 발생했습니다. 다시 시도해 주세요."}
             )
+            exc.sse_emitted = True  # type: ignore[attr-defined]
         raise
     finally:
         current_executor.reset(executor_token)

@@ -12,7 +12,7 @@ def reset_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(builder_module, "_graph", None)
 
 
-def test_get_graph_builds_only_once():
+def test_get_graph_builds_only_once() -> None:
     mock_graph = MagicMock()
     with patch.object(builder_module, "_build", return_value=mock_graph) as mock_build:
         g1 = builder_module.get_graph()
@@ -22,7 +22,7 @@ def test_get_graph_builds_only_once():
     assert mock_build.call_count == 1
 
 
-def test_get_graph_returns_build_result():
+def test_get_graph_returns_build_result() -> None:
     sentinel = object()
     with patch.object(builder_module, "_build", return_value=sentinel):
         assert builder_module.get_graph() is sentinel
