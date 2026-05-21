@@ -7,6 +7,8 @@ from .exceptions import (
     MathParsingError,
     OCREngineError,
     OCRError,
+    OCRResourceError,
+    OCRTimeoutError,
 )
 from .models import (
     OCREngineResult,
@@ -16,7 +18,6 @@ from .models import (
 )
 
 __all__ = [
-    # Exceptions
     "CommandParsingError",
     "ConfidenceThresholdError",
     "ImageProcessingError",
@@ -24,8 +25,11 @@ __all__ = [
     "OCREngineError",
     # Models
     "OCREngineResult",
+    # Exceptions
     "OCRError",
     "OCROptions",
     "OCRRequest",
+    "OCRResourceError",
     "OCRResult",
+    "OCRTimeoutError",
 ]

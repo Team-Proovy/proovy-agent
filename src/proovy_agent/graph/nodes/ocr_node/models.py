@@ -28,7 +28,7 @@ class OCROptions(BaseModel):
 
     @field_validator("engines")
     @classmethod
-    def validate_engines(cls, v):
+    def validate_engines(cls, v: list[str]) -> list[str]:
         """Validate that at least one engine is specified."""
         if not v:
             raise ValueError("At least one OCR engine must be specified")
@@ -63,7 +63,7 @@ class OCRRequest(BaseModel):
 
     @field_validator("image_data")
     @classmethod
-    def validate_image_size(cls, v):
+    def validate_image_size(cls, v: bytes) -> bytes:
         """Validate image size limits."""
         max_size = 50 * 1024 * 1024  # 50MB limit
         if len(v) > max_size:
@@ -90,7 +90,7 @@ class OCRResult(BaseModel):
 
     @field_validator("extracted_text")
     @classmethod
-    def validate_text_content(cls, v):
+    def validate_text_content(cls, v: str) -> str:
         """Validate extracted text is not empty."""
         if not v.strip():
             raise ValueError("Extracted text cannot be empty")

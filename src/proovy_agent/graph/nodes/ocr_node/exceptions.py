@@ -4,7 +4,7 @@
 class OCRError(Exception):
     """Base exception for all OCR-related errors."""
 
-    def __init__(self, message: str, details: dict | None = None):
+    def __init__(self, message: str, details: dict | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -23,7 +23,7 @@ class ImageProcessingError(OCRError):
         message: str = "Image preprocessing failed",
         details: dict | None = None,
         recovery_suggestion: str | None = None,
-    ):
+    ) -> None:
         super().__init__(message, details)
         self.recovery_suggestion = (
             recovery_suggestion or "Try with a different image format or quality"
@@ -43,7 +43,7 @@ class OCREngineError(OCRError):
         message: str = "OCR engine processing failed",
         details: dict | None = None,
         is_recoverable: bool = True,
-    ):
+    ) -> None:
         super().__init__(message, details)
         self.engine_name = engine_name
         self.is_recoverable = is_recoverable
@@ -64,7 +64,7 @@ class MathParsingError(OCRError):
         message: str = "Mathematical expression parsing failed",
         details: dict | None = None,
         original_text: str | None = None,
-    ):
+    ) -> None:
         super().__init__(message, details)
         self.original_text = original_text
 
@@ -83,7 +83,7 @@ class CommandParsingError(OCRError):
         message: str = "Command parsing failed",
         details: dict | None = None,
         invalid_commands: list[str] | None = None,
-    ):
+    ) -> None:
         super().__init__(message, details)
         self.invalid_commands = invalid_commands or []
 
@@ -103,7 +103,7 @@ class ConfidenceThresholdError(OCRError):
         highest_confidence: float,
         message: str | None = None,
         details: dict | None = None,
-    ):
+    ) -> None:
         if message is None:
             message = f"All OCR results below confidence threshold {threshold}"
         super().__init__(message, details)
@@ -120,7 +120,7 @@ class OCRTimeoutError(OCRError):
 
     def __init__(
         self, timeout_seconds: float, message: str | None = None, details: dict | None = None
-    ):
+    ) -> None:
         if message is None:
             message = f"OCR processing timed out after {timeout_seconds} seconds"
         super().__init__(message, details)
@@ -130,7 +130,9 @@ class OCRTimeoutError(OCRError):
 class OCRResourceError(OCRError):
     """Raised when OCR processing fails due to resource constraints."""
 
-    def __init__(self, resource_type: str, message: str | None = None, details: dict | None = None):
+    def __init__(
+        self, resource_type: str, message: str | None = None, details: dict | None = None
+    ) -> None:
         if message is None:
             message = f"OCR processing failed due to {resource_type} constraints"
         super().__init__(message, details)
