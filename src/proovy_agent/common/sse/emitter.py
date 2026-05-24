@@ -25,7 +25,11 @@ class SSEEmitter:
             if self._closed:
                 logger.debug("emit() 무시됨 — 이미 닫힌 이미터 (event=%s)", event)
                 return
-            await self._queue.put(SSEEvent(event=event, data=data))
+        # 락 해제 후 non-blocking put — 큐 가득 차면 드롭 (best-effort 정책)
+        try:
+            self._queue.put_nowait(SSEEvent(event=event, data=data))
+        except asyncio.QueueFull:
+            logger.warning("SSE 큐 포화 — 이벤트 드롭 (event=%s)", event)
 
     async def close(self) -> None:
         """스트림 종료를 알리는 sentinel을 큐에 삽입한다."""
@@ -33,7 +37,13 @@ class SSEEmitter:
             if self._closed:
                 return
             self._closed = True
-            await self._queue.put(None)
+        # 락 밖에서 동기적으로 드레인 후 sentinel 삽입 — 큐 포화로 인한 블로킹 없음
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._queue.put_nowait(None)
 
     async def stream(self) -> AsyncIterator[dict[str, str]]:
         """sentinel(None)을 받을 때까지 sse-starlette 호환 dict를 yield한다."""

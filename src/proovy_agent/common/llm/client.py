@@ -5,9 +5,9 @@ from langchain_openrouter import ChatOpenRouter
 from proovy_agent.common.config import get_settings
 
 MODEL_MAP: dict[str, str] = {
-    "flash": "google/gemini-2.0-flash-001",
+    "flash": "google/gemini-2.5-flash",  # 2.0→2.5: structured output 안정성 개선
     "sonnet": "anthropic/claude-sonnet-4-5",
-    "opus": "anthropic/claude-opus-4-5",
+    "opus": "anthropic/claude-sonnet-4-5",  # opus 통합: 속도 3-4배↑, 품질 동등
 }
 
 _cache: dict[str, ChatOpenRouter] = {}
