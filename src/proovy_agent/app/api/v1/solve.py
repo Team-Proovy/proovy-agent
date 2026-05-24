@@ -52,16 +52,13 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
             await emitter.close()
             current_emitter.reset(token)
 
+    # 그래프 태스크는 SSE 연결과 독립적으로 실행 — disconnect 시에도 풀이가 완료됨
+    task: asyncio.Task[None] = asyncio.create_task(_run())
+    _active_tasks.add(task)
+    task.add_done_callback(_active_tasks.discard)
+
     async def _stream() -> AsyncGenerator:
-        task: asyncio.Task[None] = asyncio.create_task(_run())
-        _active_tasks.add(task)
-        task.add_done_callback(_active_tasks.discard)
-        try:
-            async for event in emitter.stream():
-                yield event
-        finally:
-            # 클라이언트 disconnect 시 백그라운드 태스크 취소
-            if not task.done():
-                task.cancel()
+        async for event in emitter.stream():
+            yield event
 
     return EventSourceResponse(_stream())

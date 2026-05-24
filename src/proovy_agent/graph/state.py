@@ -14,6 +14,19 @@ class PlanStep(BaseModel):
     status: Literal["pending", "running", "done", "error"] = "pending"
 
 
+_STATUS_RANK: dict[str, int] = {"pending": 0, "running": 1, "done": 2, "error": 2}
+
+
+def _merge_plan(left: list[PlanStep], right: list[PlanStep]) -> list[PlanStep]:
+    """병렬 브랜치 plan 업데이트를 스텝별로 가장 진행된 status로 병합한다."""
+    if len(left) != len(right):
+        return right
+    return [
+        r if _STATUS_RANK.get(r.status, 0) >= _STATUS_RANK.get(lo.status, 0) else lo
+        for lo, r in zip(left, right, strict=True)
+    ]
+
+
 class CreditEntry(BaseModel):
     node: str
     action: str
@@ -37,7 +50,7 @@ class ProovyState(BaseModel):
     use_page: bool = False
 
     # Planner
-    plan: list[PlanStep] = Field(default_factory=list)
+    plan: Annotated[list[PlanStep], _merge_plan] = Field(default_factory=list)
     executing_step_idx: int = 0
     selected_model: str = "flash"
     difficulty: Literal["easy", "medium", "hard"] = "easy"

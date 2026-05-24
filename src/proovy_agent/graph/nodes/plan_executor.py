@@ -51,11 +51,7 @@ async def plan_executor(state: ProovyState) -> Command | list[Send]:
         goto=[
             Send(
                 _ACTION_TO_NODE[step.action],
-                {
-                    **state.model_dump(),
-                    "plan": [s.model_dump() for s in plan],
-                    "executing_step_idx": idx,
-                },
+                state.model_copy(update={"plan": plan, "executing_step_idx": idx}),
             )
             for idx, step in ready
         ],
