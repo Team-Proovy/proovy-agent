@@ -104,8 +104,10 @@ def test_credit_settled_payload_round_trip() -> None:
 
 
 def test_tool_payloads_default_tool_call_id() -> None:
-    ToolStartPayload(name="code_execute", label="실행 중")
-    ToolResultPayload(name="code_execute", output="42", success=True)
+    start = ToolStartPayload(name="code_execute", label="실행 중")
+    result = ToolResultPayload(name="code_execute", output="42", success=True)
+    assert start.tool_call_id == ""
+    assert result.tool_call_id == ""
 
 
 def test_image_result_payload_default_mime_type() -> None:

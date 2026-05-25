@@ -210,10 +210,10 @@ SSEEvent = Annotated[
 ]
 
 
-def to_sse(event: _EnvelopeBase) -> dict[str, str]:
+def to_sse(event: SSEEvent) -> dict[str, str]:
     """sse-starlette ServerSentEvent 호환 dict로 직렬화한다."""
     return {
-        "event": event.type,  # type: ignore[attr-defined]
+        "event": event.type,
         "id": f"{event.thread_id}:{event.seq}",
         "data": event.model_dump_json(),
     }
