@@ -4,7 +4,8 @@ import asyncio
 from collections.abc import AsyncIterator
 import logging
 
-from proovy_agent.common.sse.events import EventType, SSEEvent
+from proovy_agent.common.sse.events import EventType
+from proovy_agent.common.sse.events import LegacySSEEvent as SSEEvent
 
 logger = logging.getLogger(__name__)
 
