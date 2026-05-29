@@ -101,7 +101,11 @@ def test_thread_id_namespaced_by_user_in_config(client: TestClient) -> None:
 def test_solve_configures_ping_heartbeat(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """EventSourceResponse에 ping(하트비트) 간격이 설정된다 (§6.1)."""
+    """EventSourceResponse에 ping 간격이 설정되는지 검증 — 설정 계약 테스트 (§6.1).
+
+    실제 ': ping' 코멘트 라인이 유휴 구간에 나가는지는 검증하지 않는다(sse-starlette
+    내부 동작). 라이브러리 기본값이 바뀌어도 §6.1 계약이 유지되도록 명시 설정을 가드.
+    """
     from proovy_agent.app.api.v1 import solve as solve_module
 
     captured: dict = {}
@@ -122,4 +126,4 @@ def test_solve_configures_ping_heartbeat(
         )
 
     assert response.status_code == 200
-    assert captured.get("ping") == 15
+    assert captured.get("ping") == solve_module._SSE_PING_INTERVAL
