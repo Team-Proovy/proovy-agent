@@ -103,4 +103,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: tests requiring external services such as Daytona",
+    "postgres: tests requiring a real Postgres (DATABASE_URL); docker-compose.test.yml의 postgres 서비스로 실행",
 ]
