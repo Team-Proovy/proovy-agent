@@ -3,6 +3,7 @@
 from langchain_core.messages import AIMessage
 
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import CreditSettledPayload
 from proovy_agent.graph.state import ProovyState
 
 
@@ -17,8 +18,12 @@ async def credit_settler(state: ProovyState) -> dict:
 
     if emitter:
         await emitter.emit(
-            "credit_settled",
-            {"total": turn_cost, "log": [e.model_dump() for e in turn_log]},
+            CreditSettledPayload(
+                reserved=state.credit_reserved,
+                actual=turn_cost,
+                refunded=max(state.credit_reserved - turn_cost, 0.0),
+                log=turn_log,
+            )
         )
 
     return {

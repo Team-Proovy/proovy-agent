@@ -4,6 +4,7 @@ from langchain_core.tools import tool
 
 from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import ErrorPayload, ToolResultPayload, ToolStartPayload
 
 _SYSTEM_PROMPT = """당신은 수학 문제 검증용 Python 코드를 작성하는 전문가입니다.
 주어진 문제와 풀이 방향을 바탕으로 결과를 검증할 수 있는 Python 코드를 작성하세요.
@@ -26,7 +27,7 @@ async def code_generate(problem: str, approach: str) -> str:
     """
     emitter = current_emitter.get()
     if emitter:
-        await emitter.emit("tool_start", {"name": "code_generate", "label": "검증 코드 생성 중..."})
+        await emitter.emit(ToolStartPayload(name="code_generate", label="검증 코드 생성 중..."))
 
     try:
         llm = get_llm("flash")
@@ -44,10 +45,10 @@ async def code_generate(problem: str, approach: str) -> str:
             code = str(raw).strip()
     except Exception as exc:
         if emitter:
-            await emitter.emit("error", {"name": "code_generate", "message": str(exc)})
+            await emitter.emit(ErrorPayload(code="tool_error", message=str(exc)))
         raise
 
     if emitter:
-        await emitter.emit("tool_result", {"name": "code_generate", "output": code})
+        await emitter.emit(ToolResultPayload(name="code_generate", output=code, success=True))
 
     return code

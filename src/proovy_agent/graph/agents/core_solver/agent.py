@@ -12,6 +12,7 @@ from proovy_agent.common.sandbox.client import get_daytona_client
 from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.common.sandbox.manager import SandboxManager
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import ErrorPayload, SolveProgressPayload, TokenPayload
 from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
 from proovy_agent.graph.tools.code_execute import code_execute
 from proovy_agent.graph.tools.code_generate import code_generate
@@ -99,8 +100,7 @@ async def _phase1_verify(
 
     if emitter:
         await emitter.emit(
-            "solve_progress",
-            {"text": "수학 문제를 분석하고 코드로 검증하는 중입니다..."},
+            SolveProgressPayload(text="수학 문제를 분석하고 코드로 검증하는 중입니다...")
         )
 
     for iteration in range(_MAX_ITERATIONS):
@@ -140,8 +140,10 @@ async def _phase1_verify(
 
         if emitter and iteration > 0:
             await emitter.emit(
-                "solve_progress",
-                {"text": f"검증 재시도 중... ({iteration + 1}/{_MAX_ITERATIONS})"},
+                SolveProgressPayload(
+                    text=f"검증 재시도 중... ({iteration + 1}/{_MAX_ITERATIONS})",
+                    iteration=iteration + 1,
+                )
             )
 
     # 최대 반복 도달 — 마지막 AI 메시지를 결과로 사용
@@ -174,7 +176,7 @@ async def _phase2_explain(
             )
         if chunk_content:
             if emitter:
-                await emitter.emit("token", {"content": chunk_content})
+                await emitter.emit(TokenPayload(delta=chunk_content))
             content_chunks.append(chunk_content)
 
     return AIMessage(
@@ -208,7 +210,7 @@ async def core_solver(state: ProovyState) -> dict:
         if not verified:
             err_msg = "코드 검증에 실패했습니다. 풀이를 확인할 수 없습니다."
             if emitter:
-                await emitter.emit("error", {"message": err_msg})
+                await emitter.emit(ErrorPayload(code="tool_error", message=err_msg))
             _exc = RuntimeError(err_msg)
             _exc.sse_emitted = True  # type: ignore[attr-defined]
             raise _exc
@@ -263,7 +265,7 @@ async def core_solver(state: ProovyState) -> dict:
         logger.exception("CoreSolver 실행 중 오류 발생")
         if emitter and not getattr(exc, "sse_emitted", False):
             await emitter.emit(
-                "error", {"message": "풀이 중 오류가 발생했습니다. 다시 시도해 주세요."}
+                ErrorPayload(message="풀이 중 오류가 발생했습니다. 다시 시도해 주세요.")
             )
             exc.sse_emitted = True  # type: ignore[attr-defined]
         raise

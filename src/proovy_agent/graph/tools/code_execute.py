@@ -4,6 +4,7 @@ from langchain_core.tools import tool
 
 from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import ToolResultPayload, ToolStartPayload
 
 _MAX_OUTPUT = 500
 
@@ -20,7 +21,7 @@ async def code_execute(code: str) -> str:
     executor = current_executor.get()
 
     if emitter:
-        await emitter.emit("tool_start", {"name": "code_execute", "label": "코드 실행 중..."})
+        await emitter.emit(ToolStartPayload(name="code_execute", label="코드 실행 중..."))
 
     if executor is None:
         raise RuntimeError("Sandbox executor not initialized")
@@ -43,8 +44,7 @@ async def code_execute(code: str) -> str:
 
     if emitter:
         await emitter.emit(
-            "tool_result",
-            {"name": "code_execute", "output": output, "success": result.success},
+            ToolResultPayload(name="code_execute", output=output, success=result.success)
         )
 
     return output
