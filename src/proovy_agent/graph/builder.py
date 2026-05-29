@@ -9,16 +9,28 @@ from langgraph.graph import END, START, StateGraph
 from proovy_agent.graph.state import ProovyState
 
 if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.graph.state import CompiledStateGraph
 
 _graph: CompiledStateGraph | None = None
 
 
 def get_graph() -> CompiledStateGraph:
-    """그래프를 처음 호출 시 빌드하고 이후에는 캐시를 반환합니다."""
+    """그래프를 처음 호출 시 빌드하고 이후에는 캐시를 반환합니다.
+
+    lifespan에서 build_graph(checkpointer)로 미리 빌드되었다면 그 캐시를
+    반환합니다. 그렇지 않으면(테스트 등) checkpointer 없이 lazy 빌드합니다.
+    """
     global _graph
     if _graph is None:
         _graph = _build()
+    return _graph
+
+
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
+    """checkpointer를 주입해 그래프를 빌드하고 캐시를 갱신합니다 (lifespan용)."""
+    global _graph
+    _graph = _build(checkpointer)
     return _graph
 
 
@@ -47,7 +59,7 @@ def _pdf_step_done_wrapper(pdf_callable: object) -> object:
     return _wrapped
 
 
-def _build() -> CompiledStateGraph:
+def _build(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     import logging
 
     from proovy_agent.graph.agents.core_solver.agent import core_solver
@@ -96,7 +108,7 @@ def _build() -> CompiledStateGraph:
     builder.add_edge("general_node", END)
     builder.add_edge("credit_settler", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 async def _pdf_stub(state: ProovyState) -> dict:

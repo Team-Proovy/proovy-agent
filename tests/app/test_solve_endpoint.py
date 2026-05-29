@@ -1,8 +1,11 @@
 """POST /api/v1/solve SSE 엔드포인트 테스트."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 import pytest
 
 from proovy_agent.app import main
@@ -15,6 +18,13 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     monkeypatch.setattr(main, "init_daytona_client", noop)
     monkeypatch.setattr(main, "close_daytona_client", noop)
+
+    # 실제 Postgres 연결을 피하고 InMemorySaver로 격리 (.env에 database_url이 있어도)
+    @asynccontextmanager
+    async def fake_checkpointer(_url: str) -> AsyncIterator[InMemorySaver]:
+        yield InMemorySaver()
+
+    monkeypatch.setattr(main, "open_checkpointer", fake_checkpointer)
     return TestClient(main.create_app())
 
 
@@ -58,3 +68,20 @@ def test_thread_id_auto_generated(client: TestClient) -> None:
     mock_graph.ainvoke.assert_awaited_once()
     passed_state = mock_graph.ainvoke.call_args.args[0]
     assert passed_state.thread_id
+
+
+def test_thread_id_passed_as_langgraph_config(client: TestClient) -> None:
+    """전달된 thread_id가 LangGraph config(configurable.thread_id)로 넘어간다."""
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with patch("proovy_agent.app.api.v1.solve.get_graph", return_value=mock_graph):
+        response = client.post(
+            "/api/v1/solve",
+            json={"problem": "테스트", "user_id": "u", "thread_id": "th-123"},
+        )
+
+    assert response.status_code == 200
+    mock_graph.ainvoke.assert_awaited_once()
+    config = mock_graph.ainvoke.call_args.kwargs.get("config")
+    assert config == {"configurable": {"thread_id": "th-123"}}

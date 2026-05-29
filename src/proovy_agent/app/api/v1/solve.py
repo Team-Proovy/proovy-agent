@@ -41,7 +41,10 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     async def _run() -> None:
         token = current_emitter.set(emitter)
         try:
-            await get_graph().ainvoke(state)
+            await get_graph().ainvoke(
+                state,
+                config={"configurable": {"thread_id": state.thread_id}},
+            )
         except asyncio.CancelledError:
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception as exc:
