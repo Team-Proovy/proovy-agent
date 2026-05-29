@@ -9,7 +9,9 @@ DATABASE_URL 미설정 시 skip — docker-compose.test.yml의 postgres 서비�
 import os
 import uuid
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 import pytest
 
 from proovy_agent.common.checkpoint.saver import open_checkpointer
@@ -37,7 +39,7 @@ async def _stub_solver(_state: ProovyState) -> dict:
     }
 
 
-def _build(checkpointer):
+def _build(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
     builder = StateGraph(ProovyState)
     builder.add_node("solver", _stub_solver)
     builder.add_node("settler", credit_settler)

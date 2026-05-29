@@ -6,6 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile.test
     volumes:
+      # tests/는 .dockerignore로 이미지에서 제외 → 런타임에 볼륨으로 주입
+      - ./tests:/app/tests:ro
       - ./tests/pdf_node/outputs:/app/outputs
     environment:
       - PYTHONPATH=/app/src
