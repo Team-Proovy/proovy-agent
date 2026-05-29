@@ -17,7 +17,10 @@ from proovy_agent.graph.builder import build_graph
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage shared resources for the FastAPI application."""
     await init_daytona_client()
-    async with open_checkpointer(settings.database_url) as checkpointer:
+    async with open_checkpointer(
+        settings.database_url,
+        allow_memory_fallback=settings.debug,
+    ) as checkpointer:
         build_graph(checkpointer)
         try:
             yield

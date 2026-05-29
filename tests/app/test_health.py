@@ -11,7 +11,9 @@ from proovy_agent.app import main
 
 
 @asynccontextmanager
-async def _fake_checkpointer(_url: str) -> AsyncIterator[InMemorySaver]:
+async def _fake_checkpointer(
+    _url: str, *, allow_memory_fallback: bool = True
+) -> AsyncIterator[InMemorySaver]:
     """실제 Postgres 연결을 피하고 InMemorySaver로 격리."""
     yield InMemorySaver()
 

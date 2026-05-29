@@ -41,9 +41,12 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     async def _run() -> None:
         token = current_emitter.set(emitter)
         try:
+            # 체크포인트 키를 user_id로 네임스페이스해 타 사용자 thread_id 접근을 차단.
+            # user_id 인증 자체는 상위 게이트웨이/BFF 책임 (여기선 신뢰 가정).
+            checkpoint_thread_id = f"{state.user_id}:{state.thread_id}"
             await get_graph().ainvoke(
                 state,
-                config={"configurable": {"thread_id": state.thread_id}},
+                config={"configurable": {"thread_id": checkpoint_thread_id}},
             )
         except asyncio.CancelledError:
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")

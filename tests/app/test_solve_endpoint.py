@@ -21,7 +21,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     # 실제 Postgres 연결을 피하고 InMemorySaver로 격리 (.env에 database_url이 있어도)
     @asynccontextmanager
-    async def fake_checkpointer(_url: str) -> AsyncIterator[InMemorySaver]:
+    async def fake_checkpointer(
+        _url: str, *, allow_memory_fallback: bool = True
+    ) -> AsyncIterator[InMemorySaver]:
         yield InMemorySaver()
 
     monkeypatch.setattr(main, "open_checkpointer", fake_checkpointer)
@@ -70,8 +72,8 @@ def test_thread_id_auto_generated(client: TestClient) -> None:
     assert passed_state.thread_id
 
 
-def test_thread_id_passed_as_langgraph_config(client: TestClient) -> None:
-    """전달된 thread_id가 LangGraph config(configurable.thread_id)로 넘어간다."""
+def test_thread_id_namespaced_by_user_in_config(client: TestClient) -> None:
+    """체크포인트 thread_id가 user_id로 네임스페이스되어 config로 넘어간다."""
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
 
@@ -84,4 +86,4 @@ def test_thread_id_passed_as_langgraph_config(client: TestClient) -> None:
     assert response.status_code == 200
     mock_graph.ainvoke.assert_awaited_once()
     config = mock_graph.ainvoke.call_args.kwargs.get("config")
-    assert config == {"configurable": {"thread_id": "th-123"}}
+    assert config == {"configurable": {"thread_id": "u:th-123"}}
