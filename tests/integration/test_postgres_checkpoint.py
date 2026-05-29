@@ -48,12 +48,13 @@ def _build(checkpointer):
 
 
 async def _run_turn(database_url: str, thread_id: str) -> dict:
-    # 매 턴 새 연결 — turn2는 Postgres에서 역직렬화로 state를 복원해야 한다
+    # 매 턴 새 연결 — turn2는 Postgres에서 역직렬화로 state를 복원해야 한다.
+    # 체크포인트 키는 프로덕션(solve.py)과 동일하게 user_id로 네임스페이스한다.
     async with open_checkpointer(database_url) as saver:
         graph = _build(saver)
         return await graph.ainvoke(
             ProovyState(user_id="u", thread_id=thread_id),
-            config={"configurable": {"thread_id": thread_id}},
+            config={"configurable": {"thread_id": f"u:{thread_id}"}},
         )
 
 
@@ -74,6 +75,7 @@ async def test_postgres_multiturn_restore_and_per_turn_settlement(database_url: 
 
     # 턴 단위 정산 — turn2는 누적(10)이 아닌 이번 턴 비용(5)
     settler_msgs = [m for m in s2["messages"] if "cr 사용" in str(m.content)]
+    assert len(settler_msgs) == 2  # PG 복원 후 메시지 중복/누락 없이 턴당 1개
     assert settler_msgs[-1].content == "총 5.0cr 사용"
 
 
