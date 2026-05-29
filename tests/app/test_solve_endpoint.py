@@ -35,6 +35,15 @@ def test_missing_problem_returns_422(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_user_id_with_colon_returns_422(client: TestClient) -> None:
+    """user_id에 ':'가 있으면 체크포인트 키 충돌 위험으로 거부된다."""
+    response = client.post(
+        "/api/v1/solve",
+        json={"problem": "1+1", "user_id": "a:b", "thread_id": "t"},
+    )
+    assert response.status_code == 422
+
+
 def test_missing_user_id_returns_422(client: TestClient) -> None:
     response = client.post("/api/v1/solve", json={"problem": "1+1"})
     assert response.status_code == 422
