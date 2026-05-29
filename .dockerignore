@@ -9,6 +9,9 @@ __pycache__
 *.pyd
 .Python
 env
+.venv
+.venv/
+venv/
 pip-log.txt
 pip-delete-this-directory.txt
 .tox
@@ -37,10 +40,12 @@ tests/
 test_*
 *_test.py
 
-# Build outputs
+# Build outputs (호스트 산물이 이미지로 복사되면 uv sync editable 빌드가 권한 충돌)
 build/
 dist/
 *.egg-info/
+**/*.egg-info/
+**/__pycache__/
 
 # Node modules (if any)
 node_modules/

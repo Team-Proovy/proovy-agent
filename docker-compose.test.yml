@@ -31,6 +31,9 @@ services:
       context: .
       dockerfile: Dockerfile.test
     working_dir: /app
+    # tests/는 .dockerignore로 이미지에서 제외되므로 런타임에 볼륨으로 주입
+    volumes:
+      - ./tests:/app/tests:ro
     environment:
       - PYTHONPATH=/app/src
       - DATABASE_URL=postgresql://proovy:proovy@postgres:5432/proovy
