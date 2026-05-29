@@ -63,6 +63,9 @@ class ProovyState(BaseModel):
     credit_reserved: float = 0.0
     credit_log: Annotated[list[CreditEntry], operator.add] = Field(default_factory=list)
     total_credit_cost: float = 0.0
+    # 멀티턴에서 이미 정산한 credit_log 항목 수. operator.add reducer라 매 턴
+    # 전체 state 입력(기본값 0)에 덮어써지지 않고 누적된다 — 턴 단위 정산 경계.
+    settled_count: Annotated[int, operator.add] = 0
 
     # 표시 데이터 단일 소스
     messages: Annotated[list[AnyMessage], add_messages] = Field(default_factory=list)

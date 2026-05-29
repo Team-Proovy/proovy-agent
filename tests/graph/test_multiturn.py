@@ -4,7 +4,7 @@ from typing import Annotated
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 import pytest
 from typing_extensions import TypedDict
@@ -91,3 +91,41 @@ async def test_no_checkpointer_does_not_persist() -> None:
 
     contents = [m.content for m in final["messages"]]
     assert contents == ["turn2", "ack"]
+
+
+# ── 턴 단위 크레딧 정산 (실제 ProovyState + credit_settler + 체크포인터) ───────
+
+
+async def test_multiturn_credit_settled_per_turn() -> None:
+    """멀티턴에서 credit_settler가 누적이 아닌 이번 턴 비용만 정산한다."""
+    from proovy_agent.graph.nodes.credit_settler import credit_settler
+    from proovy_agent.graph.state import CreditEntry, ProovyState
+
+    async def stub_solver(_state: ProovyState) -> dict:
+        return {
+            "credit_log": [
+                CreditEntry(node="core_solver", action="llm", cost=2.0),
+                CreditEntry(node="core_solver", action="exec", cost=3.0),
+            ]
+        }
+
+    builder = StateGraph(ProovyState)
+    builder.add_node("solver", stub_solver)
+    builder.add_node("settler", credit_settler)
+    builder.add_edge(START, "solver")
+    builder.add_edge("solver", "settler")
+    builder.add_edge("settler", END)
+    graph = builder.compile(checkpointer=InMemorySaver())
+
+    cfg = {"configurable": {"thread_id": "t"}}
+    await graph.ainvoke(ProovyState(user_id="u", thread_id="t"), config=cfg)
+    s2 = await graph.ainvoke(ProovyState(user_id="u", thread_id="t"), config=cfg)
+
+    # credit_log는 reducer라 누적, total_credit_cost는 스레드 누적 합계
+    assert s2["total_credit_cost"] == 10.0
+    # 정산 경계가 누적되어 다음 턴 시작점을 가리킴
+    assert s2["settled_count"] == 4
+    # 턴마다 정산 메시지 1개, 마지막(turn2)은 누적(10)이 아닌 이번 턴 비용(5)
+    settler_msgs = [m for m in s2["messages"] if "cr 사용" in str(m.content)]
+    assert len(settler_msgs) == 2
+    assert settler_msgs[-1].content == "총 5.0cr 사용"
