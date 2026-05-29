@@ -68,7 +68,12 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     task.add_done_callback(_active_tasks.discard)
 
     async def _stream() -> AsyncGenerator:
+        first = True
         async for event in emitter.stream():
+            if first:
+                # retry: 최초 프레임에만 1회 — 클라이언트 재연결 지연 권장값(ms) (설계 §2)
+                event = {**event, "retry": 3000}
+                first = False
             yield event
 
     return EventSourceResponse(_stream())

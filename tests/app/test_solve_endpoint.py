@@ -36,6 +36,8 @@ def _parse_sse(text: str) -> list[dict]:
                 frame["event"] = line[len("event:") :].strip()
             elif line.startswith("id:"):
                 frame["id"] = line[len("id:") :].strip()
+            elif line.startswith("retry:"):
+                frame["retry"] = int(line[len("retry:") :].strip())
         if "data" in frame:
             frames.append(frame)
     return frames
@@ -208,6 +210,15 @@ def test_solve_last_event_is_done_on_success(client: TestClient) -> None:
     frames = _post(client, [])
     assert frames[-1]["data"]["type"] == "done"
     assert frames[-1]["data"]["payload"] == {"final": True}
+
+
+def test_solve_first_frame_has_retry(client: TestClient) -> None:
+    """최초 프레임에만 retry(재연결 지연) 1회 전송 (설계 §2)."""
+    frames = _post(client, [TokenPayload(delta="a"), TokenPayload(delta="b")])
+
+    assert frames[0].get("retry") == 3000
+    # 이후 프레임에는 retry 미포함 (1회만)
+    assert all("retry" not in f for f in frames[1:])
 
 
 def test_solve_emits_error_and_no_done_on_exception(client: TestClient) -> None:
