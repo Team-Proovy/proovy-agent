@@ -24,7 +24,7 @@ _active_tasks: set[asyncio.Task[None]] = set()
 # SSE ping 간격(초). sse-starlette 기본값(15)과 동일하나, 설계 §6.1 계약을 코드로
 # 명시하고 라이브러리 기본값 변경 시 회귀를 막기 위해 고정한다. 배포 LB/프록시의
 # idle 타임아웃이 15초보다 짧으면 이 값을 줄여 튜닝한다 (인프라 설정은 배포 트랙 확인).
-_SSE_PING_INTERVAL = 15
+_SSE_PING_INTERVAL: int = 15
 
 
 def _build_initial_state(request: SolveRequest) -> ProovyState:
