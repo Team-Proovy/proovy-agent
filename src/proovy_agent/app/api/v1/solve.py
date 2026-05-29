@@ -67,4 +67,5 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
         async for event in emitter.stream():
             yield event
 
-    return EventSourceResponse(_stream())
+    # ping: 15초마다 코멘트 라인 전송 — 유휴 연결의 프록시 타임아웃 방지 + disconnect 감지
+    return EventSourceResponse(_stream(), ping=15)

@@ -96,3 +96,30 @@ def test_thread_id_namespaced_by_user_in_config(client: TestClient) -> None:
     mock_graph.ainvoke.assert_awaited_once()
     config = mock_graph.ainvoke.call_args.kwargs.get("config")
     assert config == {"configurable": {"thread_id": "u:th-123"}}
+
+
+def test_solve_configures_ping_heartbeat(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EventSourceResponse에 ping(하트비트) 간격이 설정된다 (§6.1)."""
+    from proovy_agent.app.api.v1 import solve as solve_module
+
+    captured: dict = {}
+    real_esr = solve_module.EventSourceResponse
+
+    def _spy(content: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return real_esr(content, **kwargs)
+
+    monkeypatch.setattr(solve_module, "EventSourceResponse", _spy)
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+    with patch.object(solve_module, "get_graph", return_value=mock_graph):
+        response = client.post(
+            "/api/v1/solve",
+            json={"problem": "q", "user_id": "u"},
+        )
+
+    assert response.status_code == 200
+    assert captured.get("ping") == 15
