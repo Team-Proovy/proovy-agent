@@ -10,3 +10,31 @@ services:
     environment:
       - PYTHONPATH=/app/src
     working_dir: /app
+
+  # 격리된 Postgres — 체크포인터 통합 테스트용
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: proovy
+      POSTGRES_PASSWORD: proovy
+      POSTGRES_DB: proovy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proovy -d proovy"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Postgres 체크포인터 통합 테스트 러너:
+  #   docker compose -f docker-compose.test.yml run --rm --build test-pg
+  test-pg:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=postgresql://proovy:proovy@postgres:5432/proovy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uv run pytest -m postgres -v
