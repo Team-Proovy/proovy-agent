@@ -55,10 +55,11 @@ class PageStartPayload(BaseModel):
 
 
 class CreditSettledPayload(BaseModel):
-    reserved: float
-    actual: float
-    refunded: float
+    actual: float  # 이번 턴 실제 소비 — 항상 신뢰 가능
     log: list[CreditEntry]
+    # 예약(reservation) 흐름 미구현 — 선점 노드 도입 전까지 None. 프론트는 actual만 신뢰.
+    reserved: float | None = None
+    refunded: float | None = None
 
 
 class ErrorPayload(BaseModel):

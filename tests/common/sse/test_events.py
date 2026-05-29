@@ -103,6 +103,17 @@ def test_credit_settled_payload_round_trip() -> None:
     assert payload.log[0].node == "core_solver"
 
 
+def test_credit_settled_payload_reserved_refunded_optional() -> None:
+    """예약 흐름 미구현 시 actual만 필수, reserved/refunded는 None 기본값."""
+    payload = CreditSettledPayload(
+        actual=5.0,
+        log=[CreditEntry(node="core_solver", action="llm", cost=5.0)],
+    )
+    assert payload.actual == 5.0
+    assert payload.reserved is None
+    assert payload.refunded is None
+
+
 def test_tool_payloads_default_tool_call_id() -> None:
     start = ToolStartPayload(name="code_execute", label="실행 중")
     result = ToolResultPayload(name="code_execute", output="42", success=True)

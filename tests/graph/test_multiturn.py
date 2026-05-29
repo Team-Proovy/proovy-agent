@@ -129,3 +129,49 @@ async def test_multiturn_credit_settled_per_turn() -> None:
     settler_msgs = [m for m in s2["messages"] if "cr 사용" in str(m.content)]
     assert len(settler_msgs) == 2
     assert settler_msgs[-1].content == "총 5.0cr 사용"
+
+
+# ── 병렬 브랜치 EmitContext 격리 (_with_emit_context) ─────────────────────────
+
+
+async def test_with_emit_context_isolates_parallel_branches() -> None:
+    """동시 실행되는 두 브랜치가 서로의 node/step_idx를 오염시키지 않는다."""
+    import asyncio
+    import json
+
+    from proovy_agent.common.sse.context import current_emit_context, current_emitter
+    from proovy_agent.common.sse.emitter import SSEEmitter
+    from proovy_agent.graph.builder import _with_emit_context
+    from proovy_agent.graph.state import ProovyState
+
+    seen: dict[str, tuple] = {}
+
+    async def stub(_state: ProovyState) -> dict:
+        before = current_emit_context.get()
+        await asyncio.sleep(0.01)  # 두 브랜치 인터리브 유도
+        after = current_emit_context.get()
+        seen[before.node] = (before.node, before.step_idx, after.node, after.step_idx)
+        return {}
+
+    emitter = SSEEmitter(thread_id="t")
+    tok = current_emitter.set(emitter)
+    try:
+        video = _with_emit_context("video_node", stub)
+        pdf = _with_emit_context("pdf_node", stub)
+        await asyncio.gather(
+            video(ProovyState(executing_step_idx=1)),  # type: ignore[operator]
+            pdf(ProovyState(executing_step_idx=2)),  # type: ignore[operator]
+        )
+    finally:
+        current_emitter.reset(tok)
+
+    # sleep 전후로 각 브랜치가 자기 컨텍스트 유지 — 상호 오염 없음
+    assert seen["video_node"] == ("video_node", 1, "video_node", 1)
+    assert seen["pdf_node"] == ("pdf_node", 2, "pdf_node", 2)
+
+    # 자동 emit된 node_result도 브랜치별 올바른 node/step_idx를 가짐
+    await emitter.close()
+    events = [json.loads(e["data"]) async for e in emitter.stream()]
+    node_results = {(e["node"], e["step_idx"]) for e in events if e["type"] == "node_result"}
+    assert ("video_node", 1) in node_results
+    assert ("pdf_node", 2) in node_results

@@ -7,8 +7,8 @@ import pytest
 
 from proovy_agent.common.sse import emitter as emitter_module
 from proovy_agent.common.sse.context import EmitContext, current_emit_context
-from proovy_agent.common.sse.emitter import SSEEmitter
-from proovy_agent.common.sse.events import TokenPayload, ToolStartPayload
+from proovy_agent.common.sse.emitter import _PAYLOAD_TO_ENVELOPE, SSEEmitter
+from proovy_agent.common.sse.events import DonePayload, TokenPayload, ToolStartPayload
 
 
 async def _collect(emitter: SSEEmitter) -> list[dict]:
@@ -110,3 +110,48 @@ async def test_emit_unregistered_payload_drops_without_raising() -> None:
     assert emitter._seq == 1
     events = await _collect(emitter)
     assert events == []  # 드롭되어 스트림에 없음
+
+
+async def test_terminal_event_not_dropped_when_queue_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """큐 포화 상태에서도 종료 신호(DonePayload)는 evict-to-fit으로 보존된다."""
+    monkeypatch.setattr(emitter_module, "_QUEUE_MAX_SIZE", 2)
+    emitter = SSEEmitter(thread_id="t")
+
+    # 큐를 토큰으로 가득 채운다
+    await emitter.emit(TokenPayload(delta="a"))
+    await emitter.emit(TokenPayload(delta="b"))
+    # 가득 찬 상태에서 done — 드롭되지 않고 자리를 만들어 들어가야 함
+    await emitter.emit(DonePayload())
+
+    events = await _collect(emitter)
+    types = [e["event"] for e in events]
+    assert "done" in types
+
+
+def test_payload_to_envelope_maps_one_to_one() -> None:
+    """_PAYLOAD_TO_ENVELOPE가 모든 Payload↔Envelope를 1:1로 매핑한다.
+
+    매핑 누락 시 emit이 seq만 소비하고 조용히 드롭되므로 CI에서 가드한다.
+    """
+    from proovy_agent.common.sse import events as events_module
+
+    payload_classes = {
+        obj
+        for name, obj in vars(events_module).items()
+        if name.endswith("Payload") and isinstance(obj, type)
+    }
+    envelope_classes = {
+        obj
+        for name, obj in vars(events_module).items()
+        if name.endswith("Event") and isinstance(obj, type) and name != "_EnvelopeBase"
+    }
+
+    assert set(_PAYLOAD_TO_ENVELOPE.keys()) == payload_classes, (
+        f"매핑 누락 payload: {payload_classes - set(_PAYLOAD_TO_ENVELOPE.keys())}"
+    )
+    assert set(_PAYLOAD_TO_ENVELOPE.values()) == envelope_classes
+    # 각 매핑의 envelope.payload 필드 타입이 key payload와 일치
+    for payload_cls, envelope_cls in _PAYLOAD_TO_ENVELOPE.items():
+        assert envelope_cls.model_fields["payload"].annotation is payload_cls

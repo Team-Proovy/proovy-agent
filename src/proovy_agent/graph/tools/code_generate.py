@@ -1,10 +1,14 @@
 """code_generate tool — 수학 문제 검증용 Python 코드 생성."""
 
+import logging
+
 from langchain_core.tools import tool
 
 from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import ErrorPayload, ToolResultPayload, ToolStartPayload
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """당신은 수학 문제 검증용 Python 코드를 작성하는 전문가입니다.
 주어진 문제와 풀이 방향을 바탕으로 결과를 검증할 수 있는 Python 코드를 작성하세요.
@@ -43,9 +47,11 @@ async def code_generate(problem: str, approach: str) -> str:
             ).strip()
         else:
             code = str(raw).strip()
-    except Exception as exc:
+    except Exception:
+        # 내부 예외 상세는 서버 로그에만, 클라이언트에는 고정 메시지만 노출
+        logger.exception("code_generate 실패")
         if emitter:
-            await emitter.emit(ErrorPayload(code="tool_error", message=str(exc)))
+            await emitter.emit(ErrorPayload(code="tool_error", message="코드 생성에 실패했습니다."))
         raise
 
     if emitter:

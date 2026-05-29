@@ -54,6 +54,10 @@ _PAYLOAD_TO_ENVELOPE: dict[type[BaseModel], type[_EnvelopeBase]] = {
     DonePayload: DoneEvent,
 }
 
+# 종료 신호 — QueueFull이어도 드롭하지 않고 자리를 만들어 전달한다.
+# 이게 유실되면 클라이언트가 정상/오류 종료를 인지하지 못한다.
+_TERMINAL_PAYLOADS = (DonePayload, ErrorPayload)
+
 
 class SSEEmitter:
     """비동기 큐를 통해 SSE 이벤트를 수집하고 스트리밍한다."""
@@ -96,7 +100,19 @@ class SSEEmitter:
         try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.warning("SSE 큐 포화 — 이벤트 드롭 (type=%s, seq=%d)", event.type, seq)
+            if isinstance(payload, _TERMINAL_PAYLOADS):
+                # 종료 신호는 드롭 금지 — 가장 오래된 이벤트 1개를 버리고 자리를 만든다
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    self._queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    self._queue.put_nowait(event)
+                logger.warning(
+                    "SSE 큐 포화 — terminal 이벤트 보존 위해 1건 evict (type=%s, seq=%d)",
+                    event.type,
+                    seq,
+                )
+            else:
+                logger.warning("SSE 큐 포화 — 이벤트 드롭 (type=%s, seq=%d)", event.type, seq)
 
     async def close(self) -> None:
         """스트림 종료 sentinel(None)을 큐에 넣는다. 기존 이벤트는 드레인하지 않는다."""
