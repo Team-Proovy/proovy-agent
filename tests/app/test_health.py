@@ -1,9 +1,21 @@
 """Health endpoint tests."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 import pytest
 
 from proovy_agent.app import main
+
+
+@asynccontextmanager
+async def _fake_checkpointer(
+    _url: str, *, allow_memory_fallback: bool = True
+) -> AsyncIterator[InMemorySaver]:
+    """실제 Postgres 연결을 피하고 InMemorySaver로 격리."""
+    yield InMemorySaver()
 
 
 def test_health_check(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,6 +56,7 @@ def test_app_lifespan_initializes_and_closes_daytona(
 
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
+    monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
     app = main.create_app()
 
     with TestClient(app):
