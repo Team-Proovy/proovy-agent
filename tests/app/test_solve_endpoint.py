@@ -180,16 +180,13 @@ def test_solve_streams_envelope_sequence(client: TestClient) -> None:
     # seq 0부터 단조 증가
     assert [f["data"]["seq"] for f in frames] == [0, 1, 2]
 
-    # 모든 envelope이 공통 메타를 가짐
+    # 모든 프레임: 공통 메타 존재 + event 헤더 = type + id = <thread_id>:<seq>
     for f in frames:
         data = f["data"]
         assert {"type", "thread_id", "seq", "ts", "payload"} <= data.keys()
         assert data["thread_id"] == "th-1"
-
-    # id 형식 <thread_id>:<seq>, event 헤더 = type
-    assert frames[0]["id"] == "th-1:0"
-    assert frames[-1]["id"] == "th-1:2"
-    assert frames[1]["event"] == "token"
+        assert f["event"] == data["type"]
+        assert f["id"] == f"{data['thread_id']}:{data['seq']}"
 
 
 def test_solve_envelopes_parse_through_discriminated_union(client: TestClient) -> None:
@@ -228,7 +225,9 @@ def test_solve_emits_error_and_no_done_on_exception(client: TestClient) -> None:
     assert response.status_code == 200
     frames = _parse_sse(response.text)
 
+    # _BoomGraph는 emit 전에 raise → error 단 1개, done 없음
     types = [f["data"]["type"] for f in frames]
-    assert types[-1] == "error"
-    assert "done" not in types
-    assert frames[-1]["data"]["payload"]["code"] == "internal_error"
+    assert types == ["error"]
+    payload = frames[-1]["data"]["payload"]
+    assert payload["code"] == "internal_error"
+    assert payload["message"] == "풀이 중 오류가 발생했습니다."
