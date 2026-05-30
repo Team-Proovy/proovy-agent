@@ -11,7 +11,7 @@ from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sandbox.client import get_daytona_client
 from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.common.sandbox.manager import SandboxManager
-from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.context import current_emitter, current_tool_call_id
 from proovy_agent.common.sse.events import ErrorPayload, SolveProgressPayload, TokenPayload
 from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
 from proovy_agent.graph.tools.code_execute import code_execute
@@ -125,6 +125,8 @@ async def _phase1_verify(
             if tool is None:
                 result = f"Unknown tool: {tool_name}"
             else:
+                # tool 함수가 SSE 이벤트에 넣을 수 있도록 현재 tool_call_id를 노출한다.
+                tool_id_token = current_tool_call_id.set(tool_call["id"])
                 try:
                     result = await tool.ainvoke(tool_call["args"])
                     if tool_name == "code_generate":
@@ -135,6 +137,8 @@ async def _phase1_verify(
                             verified = True
                 except Exception as exc:
                     result = f"Tool error: {exc}"
+                finally:
+                    current_tool_call_id.reset(tool_id_token)
 
             messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
 

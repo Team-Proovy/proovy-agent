@@ -6,9 +6,7 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
-
-from proovy_agent.graph.state import CreditEntry, PlanStep
+from pydantic import BaseModel, ConfigDict, Field
 
 # ────────────────────────────────────────────────────────────────────────────
 # Literal 타입
@@ -39,6 +37,31 @@ ErrorCode = Literal[
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# SSE wire DTO — SSE 레이어가 소유하는 슬림 모델
+# graph.state(PlanStep/CreditEntry)에 직접 의존하지 않도록 분리해, graph 내부
+# 모델 변경이 SSE wire 포맷에 자동 전파되는 결합을 끊는다. from_attributes로
+# graph 모델 인스턴스를 변환 없이 그대로 받아 검증한다(생산지점 수정 불필요).
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class PlanStepView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    action: Literal["solve", "video", "pdf"]
+    description: str
+    status: Literal["pending", "running", "done", "error"] = "pending"
+
+
+class CreditEntryView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    node: str
+    action: str
+    model: str | None = None
+    cost: float
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Payload 모델 — envelope에 있는 thread_id/seq/ts/step_idx/node는 제외
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -47,7 +70,7 @@ ErrorCode = Literal[
 
 
 class PageStartPayload(BaseModel):
-    plan: list[PlanStep]
+    plan: list[PlanStepView]
     selected_model: Literal["flash", "sonnet", "opus"]
     difficulty: Literal["easy", "medium", "hard"]
     route: Literal["general_chat", "math_task"]
@@ -56,7 +79,7 @@ class PageStartPayload(BaseModel):
 
 class CreditSettledPayload(BaseModel):
     actual: float  # 이번 턴 실제 소비 — 항상 신뢰 가능
-    log: list[CreditEntry]
+    log: list[CreditEntryView]
     # 예약(reservation) 흐름 미구현 — 선점 노드 도입 전까지 None. 프론트는 actual만 신뢰.
     reserved: float | None = None
     refunded: float | None = None

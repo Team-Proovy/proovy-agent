@@ -86,7 +86,10 @@ def _with_emit_context(node_name: str, fn: object) -> object:
         try:
             result = await fn(state)  # type: ignore[operator]
         except Exception as exc:
-            if emitter is not None:
+            # 노드가 이미 terminal error를 emit했다면(sse_emitted) node_result는 생략한다.
+            # 그렇지 않으면 스트림 마지막 프레임이 error가 아니라 node_result가 되어
+            # "그래프 예외의 마지막 이벤트는 error"라는 계약이 깨진다.
+            if emitter is not None and not getattr(exc, "sse_emitted", False):
                 await emitter.emit(
                     NodeResultPayload(
                         status="error",

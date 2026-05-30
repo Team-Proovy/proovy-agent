@@ -5,8 +5,8 @@ import logging
 from langchain_core.tools import tool
 
 from proovy_agent.common.llm.client import get_llm
-from proovy_agent.common.sse.context import current_emitter
-from proovy_agent.common.sse.events import ErrorPayload, ToolResultPayload, ToolStartPayload
+from proovy_agent.common.sse.context import current_emitter, current_tool_call_id
+from proovy_agent.common.sse.events import ToolResultPayload, ToolStartPayload
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,13 @@ async def code_generate(problem: str, approach: str) -> str:
         approach: 풀이 방향 및 사용할 공식/방법
     """
     emitter = current_emitter.get()
+    tool_call_id = current_tool_call_id.get()
     if emitter:
-        await emitter.emit(ToolStartPayload(name="code_generate", label="검증 코드 생성 중..."))
+        await emitter.emit(
+            ToolStartPayload(
+                name="code_generate", label="검증 코드 생성 중...", tool_call_id=tool_call_id
+            )
+        )
 
     try:
         llm = get_llm("flash")
@@ -48,13 +53,25 @@ async def code_generate(problem: str, approach: str) -> str:
         else:
             code = str(raw).strip()
     except Exception:
-        # 내부 예외 상세는 서버 로그에만, 클라이언트에는 고정 메시지만 노출
+        # 내부 예외 상세는 서버 로그에만 남긴다. 이 실패는 _phase1_verify에서 잡혀
+        # 재시도될 수 있으므로 terminal error가 아니라 실패한 tool_result로 보낸다.
         logger.exception("code_generate 실패")
         if emitter:
-            await emitter.emit(ErrorPayload(code="tool_error", message="코드 생성에 실패했습니다."))
+            await emitter.emit(
+                ToolResultPayload(
+                    name="code_generate",
+                    tool_call_id=tool_call_id,
+                    output="코드 생성에 실패했습니다.",
+                    success=False,
+                )
+            )
         raise
 
     if emitter:
-        await emitter.emit(ToolResultPayload(name="code_generate", output=code, success=True))
+        await emitter.emit(
+            ToolResultPayload(
+                name="code_generate", tool_call_id=tool_call_id, output=code, success=True
+            )
+        )
 
     return code

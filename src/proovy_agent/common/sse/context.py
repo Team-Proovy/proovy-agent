@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 # CoreSolver 노드가 실행 전에 set(), tool들이 get()으로 참조
 current_emitter: ContextVar[SSEEmitter | None] = ContextVar("current_emitter", default=None)
 
+# _phase1_verify가 각 tool 호출 직전 set(), tool들이 SSE tool 이벤트에 넣기 위해 get().
+# 프론트가 같은 tool_call_id로 tool_start/tool_result를 매칭할 수 있게 한다.
+current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
+
 
 @dataclass(frozen=True)
 class EmitContext:
