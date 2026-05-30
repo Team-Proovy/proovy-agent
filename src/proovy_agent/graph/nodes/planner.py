@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import PageStartPayload
 from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
 
 # difficulty → selected_model 매핑은 운영 정책이므로 코드에서 관리
@@ -57,7 +58,15 @@ async def planner(state: ProovyState) -> dict:
 
     emitter = current_emitter.get()
     if emitter and result.use_page:
-        await emitter.emit("page_start", {"thread_id": state.thread_id})
+        await emitter.emit(
+            PageStartPayload(
+                plan=plan,
+                selected_model=selected_model,
+                difficulty=result.difficulty,
+                route=state.route,
+                use_page=result.use_page,
+            )
+        )
 
     return {
         "plan": plan,

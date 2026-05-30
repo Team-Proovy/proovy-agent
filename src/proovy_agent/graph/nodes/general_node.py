@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from proovy_agent.common.llm.client import get_llm
 from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import TokenPayload
 from proovy_agent.graph.state import CreditEntry, ProovyState
 
 _SYSTEM = "당신은 Proovy의 AI 어시스턴트입니다. 친절하고 간결하게 답변하세요."
@@ -22,7 +23,7 @@ async def general_node(state: ProovyState) -> dict:
             )
         if chunk_text:
             if emitter:
-                await emitter.emit("token", {"content": chunk_text})
+                await emitter.emit(TokenPayload(delta=chunk_text))
             content_chunks.append(chunk_text)
 
     return {

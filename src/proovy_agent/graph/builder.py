@@ -59,6 +59,55 @@ def _pdf_step_done_wrapper(pdf_callable: object) -> object:
     return _wrapped
 
 
+def _with_emit_context(node_name: str, fn: object) -> object:
+    """실행 노드를 감싸 EmitContext(node, step_idx)를 set하고 node_result를 emit한다.
+
+    plan_executor는 Command/Send로 라우팅만 하므로 노드 실행을 직접 감쌀 수 없다.
+    대신 빌더 레벨에서 step 실행 노드(core_solver/video/pdf)를 감싸 메타 컨텍스트와
+    종료 이벤트를 중앙화한다 — 노드 코드는 emit 컨텍스트를 신경 쓰지 않는다.
+    """
+    from datetime import UTC, datetime
+
+    from proovy_agent.common.sse.context import (
+        EmitContext,
+        current_emit_context,
+        current_emitter,
+    )
+    from proovy_agent.common.sse.events import NodeResultPayload
+
+    async def _wrapped(state: ProovyState) -> object:
+        ctx = EmitContext(node=node_name, step_idx=state.executing_step_idx)
+        token = current_emit_context.set(ctx)
+        emitter = current_emitter.get()
+
+        def _duration_ms() -> int:
+            return int((datetime.now(UTC) - ctx.started_at).total_seconds() * 1000)
+
+        try:
+            result = await fn(state)  # type: ignore[operator]
+        except Exception as exc:
+            # 노드가 이미 terminal error를 emit했다면(sse_emitted) node_result는 생략한다.
+            # 그렇지 않으면 스트림 마지막 프레임이 error가 아니라 node_result가 되어
+            # "그래프 예외의 마지막 이벤트는 error"라는 계약이 깨진다.
+            if emitter is not None and not getattr(exc, "sse_emitted", False):
+                await emitter.emit(
+                    NodeResultPayload(
+                        status="error",
+                        duration_ms=_duration_ms(),
+                        error_code=type(exc).__name__,
+                    )
+                )
+            raise
+        else:
+            if emitter is not None:
+                await emitter.emit(NodeResultPayload(status="done", duration_ms=_duration_ms()))
+            return result
+        finally:
+            current_emit_context.reset(token)
+
+    return _wrapped
+
+
 def _build(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     import logging
 
@@ -86,9 +135,9 @@ def _build(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGrap
     builder.add_node("general_node", general_node)
     builder.add_node("planner", planner)
     builder.add_node("plan_executor", plan_executor)
-    builder.add_node("core_solver", core_solver)
-    builder.add_node("video_node", video_node)
-    builder.add_node("pdf_node", pdf_node)
+    builder.add_node("core_solver", _with_emit_context("core_solver", core_solver))
+    builder.add_node("video_node", _with_emit_context("video_node", video_node))
+    builder.add_node("pdf_node", _with_emit_context("pdf_node", pdf_node))
     builder.add_node("credit_settler", credit_settler)
 
     builder.add_edge(START, "preprocessor")

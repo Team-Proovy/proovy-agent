@@ -1,9 +1,14 @@
 """code_generate tool — 수학 문제 검증용 Python 코드 생성."""
 
+import logging
+
 from langchain_core.tools import tool
 
 from proovy_agent.common.llm.client import get_llm
-from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.context import current_emitter, current_tool_call_id
+from proovy_agent.common.sse.events import ToolResultPayload, ToolStartPayload
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """당신은 수학 문제 검증용 Python 코드를 작성하는 전문가입니다.
 주어진 문제와 풀이 방향을 바탕으로 결과를 검증할 수 있는 Python 코드를 작성하세요.
@@ -25,8 +30,13 @@ async def code_generate(problem: str, approach: str) -> str:
         approach: 풀이 방향 및 사용할 공식/방법
     """
     emitter = current_emitter.get()
+    tool_call_id = current_tool_call_id.get()
     if emitter:
-        await emitter.emit("tool_start", {"name": "code_generate", "label": "검증 코드 생성 중..."})
+        await emitter.emit(
+            ToolStartPayload(
+                name="code_generate", label="검증 코드 생성 중...", tool_call_id=tool_call_id
+            )
+        )
 
     try:
         llm = get_llm("flash")
@@ -42,12 +52,26 @@ async def code_generate(problem: str, approach: str) -> str:
             ).strip()
         else:
             code = str(raw).strip()
-    except Exception as exc:
+    except Exception:
+        # 내부 예외 상세는 서버 로그에만 남긴다. 이 실패는 _phase1_verify에서 잡혀
+        # 재시도될 수 있으므로 terminal error가 아니라 실패한 tool_result로 보낸다.
+        logger.exception("code_generate 실패")
         if emitter:
-            await emitter.emit("error", {"name": "code_generate", "message": str(exc)})
+            await emitter.emit(
+                ToolResultPayload(
+                    name="code_generate",
+                    tool_call_id=tool_call_id,
+                    output="코드 생성에 실패했습니다.",
+                    success=False,
+                )
+            )
         raise
 
     if emitter:
-        await emitter.emit("tool_result", {"name": "code_generate", "output": code})
+        await emitter.emit(
+            ToolResultPayload(
+                name="code_generate", tool_call_id=tool_call_id, output=code, success=True
+            )
+        )
 
     return code
