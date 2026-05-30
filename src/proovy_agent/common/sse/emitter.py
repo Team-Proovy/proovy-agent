@@ -70,7 +70,13 @@ class SSEEmitter:
         self._close_lock: asyncio.Lock = asyncio.Lock()
 
     async def emit(self, payload: BaseModel) -> None:
-        """payload를 envelope으로 감싸 큐에 넣는다. 절대 raise하지 않는다 (best-effort)."""
+        """payload를 envelope으로 감싸 큐에 넣는다. 절대 raise하지 않는다 (best-effort).
+
+        seq 증가·envelope 생성·enqueue를 모두 close_lock 임계구역 안에서 처리한다.
+        enqueue가 락 밖에 있으면 그 사이 close()가 sentinel을 먼저 넣어, 승인된
+        이벤트가 sentinel 뒤로 밀려 stream()에서 영원히 소비되지 않을 수 있다.
+        """
+        ctx = current_emit_context.get() or EmitContext()
         async with self._close_lock:
             if self._closed:
                 logger.debug(
@@ -80,39 +86,42 @@ class SSEEmitter:
             seq = self._seq
             self._seq += 1
 
-        ctx = current_emit_context.get() or EmitContext()
-        try:
-            envelope_cls = _PAYLOAD_TO_ENVELOPE[type(payload)]
-            event = envelope_cls(
-                thread_id=self._thread_id,
-                seq=seq,
-                step_idx=ctx.step_idx,
-                node=ctx.node,
-                payload=payload,
-            )
-        except (KeyError, ValidationError) as exc:
-            # 코드 버그 — ERROR 로그 후 드롭. seq는 이미 소비됨(클라이언트 gap 감지)
-            logger.error(
-                "SSE payload 검증 실패 — 이벤트 드롭 (seq=%d, payload=%r): %s", seq, payload, exc
-            )
-            return
-
-        try:
-            self._queue.put_nowait(event)
-        except asyncio.QueueFull:
-            if isinstance(payload, _TERMINAL_PAYLOADS):
-                # 종료 신호는 드롭 금지 — 가장 오래된 이벤트 1개를 버리고 자리를 만든다
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    self._queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    self._queue.put_nowait(event)
-                logger.warning(
-                    "SSE 큐 포화 — terminal 이벤트 보존 위해 1건 evict (type=%s, seq=%d)",
-                    event.type,
-                    seq,
+            try:
+                envelope_cls = _PAYLOAD_TO_ENVELOPE[type(payload)]
+                event = envelope_cls(
+                    thread_id=self._thread_id,
+                    seq=seq,
+                    step_idx=ctx.step_idx,
+                    node=ctx.node,
+                    payload=payload,
                 )
-            else:
-                logger.warning("SSE 큐 포화 — 이벤트 드롭 (type=%s, seq=%d)", event.type, seq)
+            except (KeyError, ValidationError) as exc:
+                # 코드 버그 — ERROR 로그 후 드롭. seq는 이미 소비됨(클라이언트 gap 감지)
+                # payload 본문(사용자 입력·모델 출력)은 로그에 남기지 않고 타입만 기록한다
+                logger.error(
+                    "SSE payload 검증 실패 — 이벤트 드롭 (seq=%d, payload_type=%s): %s",
+                    seq,
+                    type(payload).__name__,
+                    exc,
+                )
+                return
+
+            try:
+                self._queue.put_nowait(event)
+            except asyncio.QueueFull:
+                if isinstance(payload, _TERMINAL_PAYLOADS):
+                    # 종료 신호는 드롭 금지 — 가장 오래된 이벤트 1개를 버리고 자리를 만든다
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        self._queue.get_nowait()
+                    with contextlib.suppress(asyncio.QueueFull):
+                        self._queue.put_nowait(event)
+                    logger.warning(
+                        "SSE 큐 포화 — terminal 이벤트 보존 위해 1건 evict (type=%s, seq=%d)",
+                        event.type,
+                        seq,
+                    )
+                else:
+                    logger.warning("SSE 큐 포화 — 이벤트 드롭 (type=%s, seq=%d)", event.type, seq)
 
     async def close(self) -> None:
         """스트림 종료 sentinel(None)을 큐에 넣는다. 기존 이벤트는 드레인하지 않는다."""
