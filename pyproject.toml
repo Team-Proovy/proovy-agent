@@ -49,6 +49,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "taskipy>=1.14",  # 작업 실행 자동화 (uv run task <name>)
+    "alembic>=1.18.4",
 ]
 
 # ── Taskipy ───────────────────────────────────────────────────────

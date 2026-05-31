@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     daytona_max_output_chars: int = 10_000
     sandbox_preamble_name: str = "math_v1"
     database_url: str = ""
+    credit_hold_ttl_seconds: int = Field(default=1200, gt=0)
     inworld_tts_api_key: str = Field(
         default="",
         validation_alias=AliasChoices("INWORLD_TTS_API_KEY", "INWORLD_API_KEY"),
