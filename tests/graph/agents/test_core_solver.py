@@ -10,6 +10,7 @@ import pytest
 from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.graph.agents.core_solver.agent import (
     _code_execute_succeeded,
+    _extract_generated_messages,
     _phase1_verify,
     _trim_tool_messages,
     core_solver,
@@ -31,15 +32,26 @@ class _FakeExecutor:
         stderr: str = "",
         success: bool = True,
         error: object | None = None,
+        results: list[dict[str, object]] | None = None,
     ) -> None:
         self.stdout = stdout
         self.stderr = stderr
         self.success = success
         self.error = error
+        self.results = results or []
         self.codes: list[str] = []
 
     async def run_python(self, code: str) -> object:
+        index = len(self.codes)
         self.codes.append(code)
+        if self.results:
+            result = self.results[min(index, len(self.results) - 1)]
+            return SimpleNamespace(
+                stdout=result.get("stdout", ""),
+                stderr=result.get("stderr", ""),
+                success=result.get("success", True),
+                error=result.get("error"),
+            )
         return SimpleNamespace(
             stdout=self.stdout,
             stderr=self.stderr,
@@ -104,6 +116,25 @@ def test_exit_code_1_is_not_verified() -> None:
 
 def test_error_keyword_is_not_verified() -> None:
     assert _code_execute_succeeded("error: NameError: name 'x' is not defined") is False
+
+
+def test_extract_generated_messages_ignores_normalized_input_prefix() -> None:
+    """입력 메시지 id가 정규화되어도 새 AI/Tool 메시지만 추출한다."""
+    input_messages = [
+        HumanMessage(content="1+1은?"),
+        AIMessage(content="이전 답변", metadata={"display": "content"}),
+    ]
+    output_messages = [
+        HumanMessage(content="1+1은?", id="normalized-human"),
+        AIMessage(content="이전 답변", id="normalized-ai"),
+        AIMessage(content="새 검증 메시지"),
+    ]
+
+    generated = _extract_generated_messages(input_messages, output_messages)
+
+    assert len(generated) == 1
+    assert isinstance(generated[0], AIMessage)
+    assert generated[0].content == "새 검증 메시지"
 
 
 # ── _phase1_verify ───────────────────────────────────────────────────────────
@@ -187,6 +218,47 @@ async def test_phase1_failed_code_execute_does_not_set_verified() -> None:
 
 
 @pytest.mark.asyncio
+async def test_phase1_uses_last_code_execute_result_for_verification() -> None:
+    """이전 실행이 성공해도 마지막 code_execute가 실패하면 verified=False."""
+    success_call = {"name": "code_execute", "args": {"code": "print(2)"}, "id": "tc-success"}
+    failure_call = {
+        "name": "code_execute",
+        "args": {"code": "raise ValueError()"},
+        "id": "tc-failure",
+    }
+    fake_llm = _ToolCallingFakeModel(
+        responses=[
+            AIMessage(content="", tool_calls=[success_call]),
+            AIMessage(content="", tool_calls=[failure_call]),
+            AIMessage(content="마지막 실행 결과를 정리했습니다.", tool_calls=[]),
+        ]
+    )
+    executor = _FakeExecutor(
+        results=[
+            {"stdout": "2\n", "success": True},
+            {"stderr": "ValueError\n", "success": False},
+        ]
+    )
+    token = current_executor.set(executor)
+
+    try:
+        with patch("proovy_agent.graph.agents.core_solver.agent.get_llm", return_value=fake_llm):
+            _, messages, execute_count, verified, _, _ = await _phase1_verify(
+                _state(), emitter=None
+            )
+    finally:
+        current_executor.reset(token)
+
+    assert not verified
+    assert execute_count == 2
+    assert not any(
+        isinstance(msg, AIMessage)
+        and getattr(msg, "metadata", {}).get("kind") == "verified_solution"
+        for msg in messages
+    )
+
+
+@pytest.mark.asyncio
 async def test_phase1_max_iteration_returns_current_result() -> None:
     """모델이 계속 도구만 호출해도 max iteration에서 현재 결과로 종료한다."""
     responses = [
@@ -196,8 +268,9 @@ async def test_phase1_max_iteration_returns_current_result() -> None:
                 {"name": "code_execute", "args": {"code": f"print({idx})"}, "id": f"tc{idx}"}
             ],
         )
-        for idx in range(10)
+        for idx in range(5)
     ]
+    responses.append(AIMessage(content="1단계: 코드 실행 결과 1+1=2이므로 답은 2입니다."))
     fake_llm = _ToolCallingFakeModel(responses=responses)
     token = current_executor.set(_FakeExecutor(stdout="2\n"))
 
@@ -210,9 +283,10 @@ async def test_phase1_max_iteration_returns_current_result() -> None:
         current_executor.reset(token)
 
     assert verified
-    assert 0 < execute_count <= 5
-    assert 0 < llm_calls <= 5
-    assert "최대 검증 반복" in summary
+    assert execute_count == 5
+    assert llm_calls == 6
+    assert "답은 2" in summary
+    assert "stdout:" not in summary
     assert any(
         isinstance(msg, AIMessage)
         and getattr(msg, "metadata", {}).get("kind") == "verified_solution"

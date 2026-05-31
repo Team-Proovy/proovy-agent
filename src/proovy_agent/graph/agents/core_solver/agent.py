@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 import logging
 import re
 from typing import Any
@@ -27,6 +28,7 @@ _TOOLS = [code_generate, code_execute]
 _MODEL_COST: dict[str, float] = {"flash": 1.0, "sonnet": 3.0, "opus": 8.0}
 _MAX_ITERATIONS = 5
 _TRIM_THRESHOLD = 500
+_phase1_execute_count: ContextVar[int] = ContextVar("phase1_execute_count", default=0)
 
 
 def _build_verify_system(state: ProovyState) -> str:
@@ -97,6 +99,17 @@ class _ToolCallIdMiddleware(AgentMiddleware):
     ) -> Any:
         token = current_tool_call_id.set(str(request.tool_call.get("id", "")))
         try:
+            if request.tool_call.get("name") == "code_execute":
+                count = _phase1_execute_count.get() + 1
+                _phase1_execute_count.set(count)
+                emitter = current_emitter.get()
+                if emitter and count > 1:
+                    await emitter.emit(
+                        SolveProgressPayload(
+                            text=f"검증 재시도 중... ({count}/{_MAX_ITERATIONS})",
+                            iteration=count,
+                        )
+                    )
             return await handler(request)
         finally:
             current_tool_call_id.reset(token)
@@ -129,13 +142,56 @@ def _with_metadata(message: Any, metadata: dict[str, str]) -> Any:
     return message.model_copy(update={"metadata": {**current, **metadata}})
 
 
+def _message_signature(message: Any) -> tuple[Any, ...]:
+    if isinstance(message, AIMessage):
+        tool_calls = tuple(
+            (call.get("id"), call.get("name"), repr(call.get("args", {})))
+            for call in message.tool_calls
+        )
+        return (AIMessage, _message_text(message), tool_calls)
+    if isinstance(message, ToolMessage):
+        return (ToolMessage, _message_text(message), message.tool_call_id, message.name)
+    return (type(message), _message_text(message))
+
+
+def _extract_generated_messages(input_messages: list, output_messages: list) -> list:
+    """Agent 출력에서 입력 히스토리를 제외하고 새 AI/Tool 메시지만 반환합니다."""
+    input_ids = {msg.id for msg in input_messages if getattr(msg, "id", None)}
+    input_signatures = [_message_signature(msg) for msg in input_messages]
+    consumed_signatures: set[int] = set()
+    generated: list = []
+
+    for msg in output_messages:
+        msg_id = getattr(msg, "id", None)
+        if msg_id and msg_id in input_ids:
+            continue
+
+        signature = _message_signature(msg)
+        matched_idx = next(
+            (
+                idx
+                for idx, input_signature in enumerate(input_signatures)
+                if idx not in consumed_signatures and input_signature == signature
+            ),
+            None,
+        )
+        if matched_idx is not None:
+            consumed_signatures.add(matched_idx)
+            continue
+
+        if isinstance(msg, AIMessage | ToolMessage):
+            generated.append(msg)
+
+    return generated
+
+
 def _collect_phase1_stats(messages: list) -> tuple[int, bool, int, int]:
     """Agent가 생성한 메시지에서 실행 횟수와 검증 성공 여부를 계산합니다."""
     tool_call_names: dict[str, str] = {}
     execute_count = 0
     codegen_count = 0
     llm_call_count = 0
-    verified = False
+    last_execute_verified = False
 
     for msg in messages:
         if isinstance(msg, AIMessage):
@@ -149,23 +205,44 @@ def _collect_phase1_stats(messages: list) -> tuple[int, bool, int, int]:
                 codegen_count += 1
             elif tool_name == "code_execute":
                 execute_count += 1
-                if getattr(msg, "status", "success") != "error" and _code_execute_succeeded(
-                    str(msg.content)
-                ):
-                    verified = True
+                last_execute_verified = getattr(
+                    msg, "status", "success"
+                ) != "error" and _code_execute_succeeded(str(msg.content))
 
-    return execute_count, verified, llm_call_count, codegen_count
+    return execute_count, last_execute_verified, llm_call_count, codegen_count
 
 
 def _current_result_summary(messages: list) -> str:
-    last_tool = next((m for m in reversed(messages) if isinstance(m, ToolMessage)), None)
-    if last_tool:
-        return (
-            "최대 검증 반복에 도달했습니다. "
-            "현재까지의 코드 실행 결과를 기준으로 종료합니다.\n\n"
-            f"{_message_text(last_tool)}"
-        )
-    return "최대 검증 반복에 도달했습니다. 현재까지의 결과로 종료합니다."
+    return (
+        "최대 검증 반복에 도달했습니다. "
+        "마지막 코드 실행은 성공했으며, 원본 code/stdout evidence는 함께 보존되어 있습니다. "
+        "현재 확인된 실행 결과를 기준으로 풀이를 종료합니다."
+    )
+
+
+def _needs_limit_summary(messages: list, verified: bool) -> bool:
+    if not verified:
+        return False
+    return not any(
+        isinstance(msg, AIMessage) and not msg.tool_calls and not _is_iteration_limit_message(msg)
+        for msg in messages
+    )
+
+
+async def _build_limit_summary_message(state: ProovyState, messages: list) -> AIMessage:
+    """반복 제한 종료 시 보존된 evidence만 근거로 verified_solution 프로즈를 만듭니다."""
+    llm = get_llm(state.selected_model)
+    system_msg = SystemMessage(
+        "당신은 Proovy의 수학 검증 결과 요약기입니다.\n"
+        "새 풀이를 만들거나 재계산하지 말고, 아래 대화와 code/stdout evidence에 이미 있는 "
+        "내용만 근거로 요약하세요.\n"
+        "반드시 단계, 핵심 수식, 최종 답을 포함한 자연스러운 프로즈로 작성하세요.\n"
+        "반복 제한 때문에 정보가 부족하면, 확인된 범위와 한계를 짧게 밝히세요.\n"
+        "도구 출력 원문을 그대로 복사하지 마세요."
+    )
+    response = await llm.ainvoke([system_msg, *state.messages, *_trim_tool_messages(messages)])
+    content = _message_text(response).strip() or _current_result_summary(messages)
+    return AIMessage(content=content, metadata=getattr(response, "metadata", {}) or {})
 
 
 def _tag_phase1_messages(messages: list, state: ProovyState, verified: bool) -> tuple[list, str]:
@@ -212,7 +289,7 @@ def _tag_phase1_messages(messages: list, state: ProovyState, verified: bool) -> 
     return tagged, _message_text(tagged[last_ai_idx])
 
 
-def _build_phase1_agent(state: ProovyState):
+def _build_phase1_agent(state: ProovyState) -> Any:
     """Phase 1 검증 agent를 LangChain create_agent 계약으로 생성합니다."""
     return create_agent(
         model=get_llm(state.selected_model),
@@ -245,23 +322,22 @@ async def _phase1_verify(
         )
 
     agent = _build_phase1_agent(state)
-    result = await agent.ainvoke({"messages": messages})
+    execute_count_token = _phase1_execute_count.set(0)
+    try:
+        result = await agent.ainvoke({"messages": messages})
+    finally:
+        _phase1_execute_count.reset(execute_count_token)
     all_messages = list(result["messages"])
-    generated_messages = all_messages[len(state.messages) :]
+    generated_messages = _extract_generated_messages(state.messages, all_messages)
 
     execute_count, verified, llm_call_count, codegen_count = _collect_phase1_stats(
         generated_messages
     )
+    if _needs_limit_summary(generated_messages, verified):
+        generated_messages.append(await _build_limit_summary_message(state, generated_messages))
+        llm_call_count += 1
+
     tagged_messages, verified_summary = _tag_phase1_messages(generated_messages, state, verified)
-
-    if emitter and execute_count > 1:
-        await emitter.emit(
-            SolveProgressPayload(
-                text=f"검증 재시도 후 결과를 정리했습니다. ({execute_count}/{_MAX_ITERATIONS})",
-                iteration=execute_count,
-            )
-        )
-
     return (
         verified_summary,
         tagged_messages,
