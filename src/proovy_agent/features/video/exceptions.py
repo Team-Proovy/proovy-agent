@@ -1,8 +1,12 @@
-"""Exception hierarchy for video generation pipeline failures."""
+"""Exception hierarchy for video generation pipeline failures.
+
+Provider and infrastructure errors should be wrapped as PermanentFailure or
+TransientFailure near their stage boundary. Unknown failures are kept explicit
+so the worker can apply its conservative terminal-failure policy.
+"""
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from proovy_agent.features.video.models import (
@@ -47,15 +51,14 @@ class PipelineError(Exception):
     def to_user_diagnostic(
         self,
         *,
-        retriable: bool | None = None,
         final_video_url: str | None = None,
         partial_segments_completed: int | None = None,
     ) -> UserDiagnostic:
-        """Build a user-safe diagnostic payload from this exception."""
+        """Build a user-safe diagnostic payload from this exception policy."""
         return UserDiagnostic(
             stage_failed=self.stage,
             user_error_code=self.user_error_code,
-            retriable=self.retryable if retriable is None else retriable,
+            retriable=self.retryable,
             final_video_url=final_video_url,
             partial_segments_completed=partial_segments_completed,
         )
@@ -80,10 +83,14 @@ class InvalidSolutionPlanError(PermanentFailure):
     stage = StageName.SOLVE
 
 
+_PERMANENT_TYPES = (PermanentFailure,)
+_TRANSIENT_TYPES = (TransientFailure, TimeoutError, MemoryError, ConnectionError)
+
+
 def classify_failure(exc: Exception) -> FailureKind:
     """Classify a failure for worker retry/refund behavior."""
-    if isinstance(exc, PermanentFailure):
+    if isinstance(exc, _PERMANENT_TYPES):
         return "permanent"
-    if isinstance(exc, TransientFailure | asyncio.TimeoutError | MemoryError):
+    if isinstance(exc, _TRANSIENT_TYPES):
         return "transient"
     return "unknown"

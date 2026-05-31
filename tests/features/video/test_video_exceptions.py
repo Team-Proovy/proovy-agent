@@ -56,6 +56,7 @@ def test_transient_failures_are_retryable() -> None:
     assert classify_failure(error) == "transient"
     assert classify_failure(TimeoutError()) == "transient"
     assert classify_failure(MemoryError()) == "transient"
+    assert classify_failure(ConnectionError()) == "transient"
 
 
 def test_unknown_failures_remain_unclassified_for_worker_policy() -> None:

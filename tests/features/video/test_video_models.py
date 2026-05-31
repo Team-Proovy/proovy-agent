@@ -79,6 +79,26 @@ def test_solution_plan_rejects_empty_steps_and_blank_text() -> None:
         SolutionStep(step_number=1, explanation="  ")
 
 
+def test_solution_plan_rejects_non_consecutive_step_numbers() -> None:
+    """SolutionPlan requires ordered 1-based step numbers."""
+    with pytest.raises(ValidationError, match="consecutive starting at 1"):
+        SolutionPlan(
+            title="풀이",
+            steps=[
+                SolutionStep(step_number=1, explanation="첫 단계"),
+                SolutionStep(step_number=1, explanation="중복 단계"),
+            ],
+        )
+
+    with pytest.raises(ValidationError, match="consecutive starting at 1"):
+        SolutionPlan(
+            title="풀이",
+            steps=[
+                SolutionStep(step_number=2, explanation="시작 번호가 잘못된 단계"),
+            ],
+        )
+
+
 def test_video_hints_reject_blank_visualization_hints() -> None:
     """VideoHints owns visualization hints and requires meaningful values."""
     with pytest.raises(ValidationError, match="visualization_hints must not contain blank items"):
@@ -131,6 +151,33 @@ def test_user_diagnostic_serializes_only_safe_error_fields() -> None:
         "partial_segments_completed": 3,
     }
     assert diagnostic.user_message == user_error_message(UserErrorCode.RENDER_UNRECOVERABLE)
+
+
+def test_user_diagnostic_success_has_no_failure_message() -> None:
+    """Successful diagnostics expose a URL without an error display message."""
+    diagnostic = UserDiagnostic(final_video_url="https://storage.example/video.mp4")
+
+    assert diagnostic.is_success is True
+    assert diagnostic.user_message == ""
+
+    with pytest.raises(ValidationError, match="cannot be combined with error fields"):
+        UserDiagnostic(
+            final_video_url="https://storage.example/video.mp4",
+            stage_failed=StageName.RENDER,
+        )
+
+    with pytest.raises(ValidationError, match="cannot be combined with error fields"):
+        UserDiagnostic(
+            final_video_url="https://storage.example/video.mp4",
+            user_error_code=UserErrorCode.UNKNOWN,
+            retriable=True,
+        )
+
+    with pytest.raises(ValidationError, match="cannot be combined with error fields"):
+        UserDiagnostic(
+            final_video_url="https://storage.example/video.mp4",
+            user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+        )
 
 
 def test_all_user_error_codes_have_messages() -> None:

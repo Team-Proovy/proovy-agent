@@ -123,6 +123,15 @@ class SolutionPlan(_VideoBaseModel):
             raise ValueError("steps must contain at least one item")
         return value
 
+    @model_validator(mode="after")
+    def validate_step_numbers(self) -> SolutionPlan:
+        """Require ordered 1-based step numbers for downstream segment mapping."""
+        step_numbers = [step.step_number for step in self.steps]
+        expected = list(range(1, len(self.steps) + 1))
+        if step_numbers != expected:
+            raise ValueError("step_number values must be consecutive starting at 1")
+        return self
+
 
 class TargetSelection(_VideoBaseModel):
     """Stage 1a routing output for resolving the target solve turn."""
@@ -234,11 +243,25 @@ class UserDiagnostic(_VideoBaseModel):
 
     @model_validator(mode="after")
     def validate_final_url_for_success_only(self) -> UserDiagnostic:
-        if self.final_video_url and self.user_error_code is not UserErrorCode.UNKNOWN:
-            raise ValueError("final_video_url is only valid for successful or unknown diagnostics")
+        """Keep successful diagnostics distinct from user-visible failure fields."""
+        if not self.final_video_url:
+            return self
+        if (
+            self.stage_failed is not None
+            or self.user_error_code is not UserErrorCode.UNKNOWN
+            or self.retriable
+        ):
+            raise ValueError("final_video_url cannot be combined with error fields")
         return self
 
     @property
+    def is_success(self) -> bool:
+        """Whether this diagnostic represents a completed video."""
+        return self.final_video_url is not None
+
+    @property
     def user_message(self) -> str:
-        """Safe localized message for client display."""
+        """Safe localized failure message for client display."""
+        if self.is_success:
+            return ""
         return user_error_message(self.user_error_code)
