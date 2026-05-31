@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from proovy_agent.common.llm.client import get_llm
@@ -16,6 +16,32 @@ _DIFFICULTY_TO_MODEL: dict[str, str] = {
     "medium": "sonnet",
     "hard": "opus",
 }
+_VIDEO_ONLY_HINTS = (
+    "@해설영상",
+    "해설영상",
+    "해설 영상",
+    "영상으로",
+    "영상만",
+    "동영상으로",
+    "동영상만",
+    "비디오로",
+    "비디오만",
+)
+_FULL_INTENT_HINTS = (
+    "풀이도",
+    "풀이와",
+    "풀이랑",
+    "텍스트",
+    "글로",
+    "답도",
+    "해설지도",
+    "pdf",
+    "함께",
+    "같이",
+    "둘 다",
+    "둘다",
+    "풀고",
+)
 
 _SYSTEM = """당신은 수학 문제 풀이 계획을 세우는 Planner입니다.
 사용자 메시지를 분석하여 JSON 형식으로 풀이 계획을 작성하세요.
@@ -53,10 +79,37 @@ class _PlannerOutput(BaseModel):
 def _resolve_explanation_mode(
     requested: Literal["full", "brief"],
     plan: list[PlanStep],
+    user_text: str = "",
 ) -> Literal["full", "brief"]:
     if requested == "brief" and any(step.action == "video" for step in plan):
         return "brief"
+    if any(step.action == "video" for step in plan) and _is_video_only_request(user_text):
+        return "brief"
     return "full"
+
+
+def _content_to_text(content: object) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+        )
+    return str(content)
+
+
+def _latest_human_text(state: ProovyState) -> str:
+    for msg in reversed(state.messages):
+        if isinstance(msg, HumanMessage):
+            return _content_to_text(msg.content)
+    return ""
+
+
+def _is_video_only_request(user_text: str) -> bool:
+    normalized = user_text.lower()
+    has_video_intent = any(hint.lower() in normalized for hint in _VIDEO_ONLY_HINTS)
+    has_full_intent = any(hint.lower() in normalized for hint in _FULL_INTENT_HINTS)
+    return has_video_intent and not has_full_intent
 
 
 async def planner(state: ProovyState) -> dict:
@@ -70,7 +123,11 @@ async def planner(state: ProovyState) -> dict:
         plan.insert(0, PlanStep(action="solve", description="수학 문제 풀이"))
 
     selected_model = _DIFFICULTY_TO_MODEL[result.difficulty]
-    explanation_mode = _resolve_explanation_mode(result.explanation_mode, plan)
+    explanation_mode = _resolve_explanation_mode(
+        result.explanation_mode,
+        plan,
+        _latest_human_text(state),
+    )
 
     emitter = current_emitter.get()
     if emitter and result.use_page:

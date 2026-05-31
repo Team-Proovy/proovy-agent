@@ -71,6 +71,17 @@ def _trim_tool_messages(messages: list) -> list:
     return trimmed
 
 
+def _content_to_str(content: object) -> str:
+    """LLM 메시지 content를 downstream이 소비하기 쉬운 문자열로 정규화한다."""
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+        )
+    return str(content)
+
+
 def _code_execute_succeeded(result: str) -> bool:
     """code_execute 결과 문자열에서 성공 여부를 판단합니다."""
     if "error:" in result.lower():
@@ -86,7 +97,7 @@ def _build_verified_solution_message(
     """CoreSolver의 검증 산출물을 downstream이 찾을 수 있는 메시지로 남긴다."""
     display = "content" if explanation_mode == "brief" else "hidden"
     return AIMessage(
-        content=content,
+        content=_content_to_str(content),
         metadata={"kind": "verified_solution", "display": display},
     )
 
@@ -124,13 +135,8 @@ async def _phase1_verify(
 
         if not response.tool_calls:
             # 도구 호출 없이 LLM이 응답 → 검증 없이 종료
-            content = response.content
-            if isinstance(content, list):
-                content = "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
-                )
-            return str(content), messages, execute_count, verified, llm_call_count, codegen_count
+            content = _content_to_str(response.content)
+            return content, messages, execute_count, verified, llm_call_count, codegen_count
 
         for tool_call in response.tool_calls:
             tool_name = tool_call["name"]
@@ -168,7 +174,7 @@ async def _phase1_verify(
         (m for m in reversed(messages) if isinstance(m, AIMessage) and not m.tool_calls),
         None,
     )
-    summary = str(last_ai.content) if last_ai else "검증 결과를 확인하지 못했습니다."
+    summary = _content_to_str(last_ai.content) if last_ai else "검증 결과를 확인하지 못했습니다."
     return summary, messages, execute_count, verified, llm_call_count, codegen_count
 
 
@@ -185,12 +191,7 @@ async def _phase2_explain(
 
     content_chunks: list[str] = []
     async for chunk in llm.astream([system_msg, *user_messages]):
-        chunk_content = chunk.content
-        if isinstance(chunk_content, list):
-            chunk_content = "".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in chunk_content
-            )
+        chunk_content = _content_to_str(chunk.content)
         if chunk_content:
             if emitter:
                 await emitter.emit(TokenPayload(delta=chunk_content))

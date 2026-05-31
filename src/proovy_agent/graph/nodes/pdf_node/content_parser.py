@@ -57,7 +57,12 @@ class ContentParser:
             current_order = 0
 
             # 1. display 태그별로 messages 분류
-            content_messages = self._filter_by_display(messages, "content")
+            verified_solution_messages = self._filter_verified_solution_messages(messages)
+            content_messages = [
+                msg
+                for msg in self._filter_by_display(messages, "content")
+                if not self._is_verified_solution_message(msg)
+            ]
             progress_messages = self._filter_by_display(messages, "progress")
             tool_messages = self._filter_by_display(messages, "tool")
 
@@ -69,19 +74,28 @@ class ContentParser:
                 sections.extend(content_sections)
                 current_order += len(content_sections)
 
-            # 3. 풀이 진행 과정 파싱 (progress)
+            # 3. 검증된 풀이 원문 파싱 (verified_solution)
+            if verified_solution_messages:
+                verified_solution_section = self._create_verified_solution_section(
+                    verified_solution_messages,
+                    current_order,
+                )
+                sections.append(verified_solution_section)
+                current_order += 1
+
+            # 4. 풀이 진행 과정 파싱 (progress)
             if progress_messages:
                 progress_section = self._create_progress_section(progress_messages, current_order)
                 sections.append(progress_section)
                 current_order += 1
 
-            # 4. 코드 실행 결과 파싱 (tool)
+            # 5. 코드 실행 결과 파싱 (tool)
             if tool_messages:
                 tool_section = self._create_tool_section(tool_messages, current_order)
                 sections.append(tool_section)
                 current_order += 1
 
-            # 5. 섹션이 없으면 fallback 처리
+            # 6. 섹션이 없으면 fallback 처리
             if not sections:
                 fallback_section = self._create_fallback_section(messages)
                 sections.append(fallback_section)
@@ -99,6 +113,19 @@ class ContentParser:
             if display == display_type:
                 filtered.append(msg)
         return filtered
+
+    def _filter_verified_solution_messages(self, messages: list[AnyMessage]) -> list[AnyMessage]:
+        """CoreSolver의 verified_solution 메시지만 필터링."""
+        return [
+            msg
+            for msg in messages
+            if self._is_verified_solution_message(msg)
+            and self._message_content_to_str(getattr(msg, "content", "")).strip()
+        ]
+
+    def _is_verified_solution_message(self, message: AnyMessage) -> bool:
+        metadata = getattr(message, "metadata", {})
+        return metadata.get("kind") == "verified_solution"
 
     async def _parse_content_messages(
         self, messages: list[AnyMessage], start_order: int
@@ -130,8 +157,18 @@ class ContentParser:
         contents = []
         for msg in messages:
             if hasattr(msg, "content") and msg.content:
-                contents.append(str(msg.content).strip())
+                contents.append(self._message_content_to_str(msg.content).strip())
         return "\n\n".join(contents)
+
+    def _message_content_to_str(self, content: object) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, list):
+            return "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+        return str(content)
 
     def _split_by_steps(self, content: str, start_order: int) -> list[ContentSection]:
         """텍스트를 풀이 단계별로 분할."""
@@ -251,6 +288,22 @@ class ContentParser:
             metadata={"source": "progress"},
         )
 
+    def _create_verified_solution_section(
+        self,
+        messages: list[AnyMessage],
+        order: int,
+    ) -> ContentSection:
+        """verified_solution 메시지로부터 검증된 풀이 섹션 생성."""
+        verified_solution_content = self._merge_message_contents(messages)
+
+        return ContentSection(
+            title="검증된 풀이",
+            content_type=self._detect_content_type(verified_solution_content),
+            content=verified_solution_content,
+            order=order,
+            metadata={"source": "verified_solution"},
+        )
+
     def _create_tool_section(self, messages: list[AnyMessage], order: int) -> ContentSection:
         """tool 메시지들로부터 코드 실행 결과 섹션 생성."""
         tool_results = []
@@ -278,7 +331,7 @@ class ContentParser:
         for msg in messages:
             if hasattr(msg, "content") and msg.content:
                 msg_type = type(msg).__name__
-                content = str(msg.content)
+                content = self._message_content_to_str(msg.content)
                 all_content.append(f"[{msg_type}] {content}")
 
         return ContentSection(

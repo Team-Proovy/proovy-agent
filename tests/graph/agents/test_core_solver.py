@@ -7,6 +7,7 @@ import pytest
 
 from proovy_agent.graph.agents.core_solver.agent import (
     _code_execute_succeeded,
+    _content_to_str,
     _phase1_verify,
     _trim_tool_messages,
     core_solver,
@@ -46,6 +47,13 @@ def test_trim_does_not_modify_non_tool_messages() -> None:
 
 
 # ── _code_execute_succeeded ──────────────────────────────────────────────────
+
+
+def test_content_to_str_normalizes_multimodal_blocks() -> None:
+    assert (
+        _content_to_str([{"type": "text", "text": "검증된 "}, {"text": "풀이"}, 3])
+        == "검증된 풀이3"
+    )
 
 
 def test_success_output_is_verified() -> None:
@@ -188,6 +196,37 @@ async def test_core_solver_brief_skips_phase2_and_exposes_verified_solution() ->
     assert result["current_phase"] == "verify"
     assert result["plan"][0].status == "done"
     manager.destroy_executor.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_core_solver_normalizes_verified_solution_content() -> None:
+    """verified_solution은 list content가 와도 문자열로 저장한다."""
+    phase1 = AsyncMock(
+        return_value=(
+            "검증 요약",
+            [AIMessage(content=[{"type": "text", "text": "검증된 "}, {"text": "풀이"}])],
+            1,
+            True,
+            1,
+            0,
+        )
+    )
+    phase2 = AsyncMock(return_value=AIMessage(content="자세한 설명"))
+    manager = _mock_manager()
+    state = _state(
+        explanation_mode="brief",
+        plan=[PlanStep(action="solve", description="수학 문제 풀이", status="running")],
+    )
+
+    with (
+        patch("proovy_agent.graph.agents.core_solver.agent.get_daytona_client", return_value=None),
+        patch("proovy_agent.graph.agents.core_solver.agent.SandboxManager", return_value=manager),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase1_verify", phase1),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase2_explain", phase2),
+    ):
+        result = await core_solver(state)
+
+    assert result["messages"][0].content == "검증된 풀이"
 
 
 @pytest.mark.asyncio

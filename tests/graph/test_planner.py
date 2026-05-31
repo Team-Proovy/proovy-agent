@@ -73,6 +73,23 @@ async def test_ambiguous_intent_defaults_to_full_explanation_mode() -> None:
 
 
 @pytest.mark.asyncio
+async def test_video_only_text_forces_brief_when_model_defaults_to_full() -> None:
+    result = planner_module._PlannerOutput(
+        steps=[
+            planner_module._StepInput(action="video", description="해설 영상 생성"),
+        ],
+        difficulty="easy",
+        use_page=False,
+        explanation_mode="full",
+    )
+
+    with patch("proovy_agent.graph.nodes.planner.get_llm", return_value=_mock_llm(result)):
+        update = await planner_module.planner(_state("이 문제 영상으로 설명해줘"))
+
+    assert update["explanation_mode"] == "brief"
+
+
+@pytest.mark.asyncio
 async def test_brief_without_video_falls_back_to_full_explanation_mode() -> None:
     result = planner_module._PlannerOutput(
         steps=[
