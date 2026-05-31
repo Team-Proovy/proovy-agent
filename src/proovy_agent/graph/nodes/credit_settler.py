@@ -16,17 +16,13 @@ async def credit_settler(state: ProovyState) -> dict:
     turn_cost = sum(e.cost for e in turn_log)
     cumulative = sum(e.cost for e in state.credit_log)
 
-    # 예약 흐름이 있을 때만 reserved/refunded를 채운다 (없으면 None — actual만 신뢰)
-    reserved = state.credit_reserved or None
-    refunded = max(state.credit_reserved - turn_cost, 0.0) if state.credit_reserved else None
-
     if emitter:
         await emitter.emit(
             CreditSettledPayload(
                 actual=turn_cost,
                 log=turn_log,
-                reserved=reserved,
-                refunded=refunded,
+                reserved=None,
+                refunded=None,
             )
         )
 
