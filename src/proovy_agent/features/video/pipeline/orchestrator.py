@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from proovy_agent.features.video.models import (
@@ -30,13 +31,14 @@ async def _run_stage[StageResult](
     ctx: StageContext,
 ) -> StageResult:
     ctx.raise_if_cancelled()
-    await ctx.emit_stage_event(stage, "started")
     try:
+        await ctx.emit_stage_event(stage, "started")
         result = await action()
+        await ctx.emit_stage_event(stage, "completed")
     except Exception:
-        await ctx.emit_stage_event(stage, "failed")
+        with suppress(Exception):
+            await ctx.emit_stage_event(stage, "failed")
         raise
-    await ctx.emit_stage_event(stage, "completed")
     return result
 
 

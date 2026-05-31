@@ -3,8 +3,11 @@
 from pydantic import ValidationError
 import pytest
 
+from proovy_agent.common.tts.models import WordTimestamp
 from proovy_agent.features.video.models import (
     DirectorBriefPolicy,
+    ScriptSegment,
+    SegmentTTSResult,
     SolutionPlan,
     SolutionStep,
     StageName,
@@ -14,6 +17,7 @@ from proovy_agent.features.video.models import (
     VideoHints,
     VideoJobInput,
     VideoOptions,
+    VideoScript,
     user_error_message,
 )
 
@@ -186,3 +190,43 @@ def test_all_user_error_codes_have_messages() -> None:
         assert user_error_message(code)
 
     assert user_error_message("not_a_real_code") == user_error_message(UserErrorCode.UNKNOWN)
+
+
+def test_video_script_rejects_duplicate_segment_ids() -> None:
+    """VideoScript requires stable unique segment IDs for stage alignment."""
+    with pytest.raises(ValidationError, match="segment_id values must be unique"):
+        VideoScript(
+            title="풀이",
+            segments=[
+                ScriptSegment(
+                    segment_id="step-1",
+                    order=1,
+                    visual_type="dry_run",
+                    narration="첫 단계",
+                ),
+                ScriptSegment(
+                    segment_id="step-1",
+                    order=2,
+                    visual_type="dry_run",
+                    narration="중복 단계",
+                ),
+            ],
+        )
+
+
+def test_segment_tts_result_reuses_word_timestamp_model() -> None:
+    """SegmentTTSResult validates timestamps with the common TTS model."""
+    result = SegmentTTSResult(
+        segment_id="step-1",
+        narration="양변에 3을 더합니다.",
+        word_timestamps=[{"word": "양변", "start": 0.0, "end": 0.4}],
+    )
+
+    assert result.word_timestamps == [WordTimestamp(word="양변", start=0.0, end=0.4)]
+
+    with pytest.raises(ValidationError, match="end must be greater than or equal to start"):
+        SegmentTTSResult(
+            segment_id="step-1",
+            narration="양변에 3을 더합니다.",
+            word_timestamps=[{"word": "양변", "start": 0.4, "end": 0.0}],
+        )

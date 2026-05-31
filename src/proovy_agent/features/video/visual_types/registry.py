@@ -105,6 +105,16 @@ class VisualTypeRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown visual_type: {visual_type}") from exc
 
+    def validate_fallback_candidates(self) -> None:
+        """Fail fast when registered fallbacks reference missing visual_types."""
+        missing: list[str] = []
+        for definition in self._definitions.values():
+            for candidate in definition.fallback_candidates:
+                if candidate not in self._definitions:
+                    missing.append(f"{definition.visual_type}->{candidate}")
+        if missing:
+            raise KeyError(f"unknown fallback_candidates: {', '.join(sorted(missing))}")
+
     def prompt_catalog(self) -> str:
         """Render deterministic scriptify catalog text from registered snippets."""
         return "\n\n".join(

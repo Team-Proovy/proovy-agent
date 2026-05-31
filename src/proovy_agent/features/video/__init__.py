@@ -2,6 +2,7 @@
 
 from proovy_agent.features.video.exceptions import (
     InvalidSolutionPlanError,
+    InvalidStageOutputError,
     PermanentFailure,
     PipelineError,
     TransientFailure,
@@ -34,6 +35,7 @@ __all__ = [
     "FailureKind",
     "FinalVideoArtifact",
     "InvalidSolutionPlanError",
+    "InvalidStageOutputError",
     "PermanentFailure",
     "PipelineError",
     "RenderedSegment",

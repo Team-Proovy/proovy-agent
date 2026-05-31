@@ -37,6 +37,20 @@ def test_registry_keeps_core_five_visual_type_fields() -> None:
     assert definition.narration_alignment_rule.startswith("Narration must")
     assert registry.prompt_catalog() == "## equation_write\nWrite one equation clearly."
 
+    with pytest.raises(KeyError, match="equation_write->highlight_result"):
+        registry.validate_fallback_candidates()
+
+    registry.register(
+        "highlight_result",
+        schema={"type": "object"},
+        prompt_snippet="Highlight the final result.",
+        render_fn=_render_stub,
+        fallback_candidates=[],
+        narration_alignment_rule="Narration must mention the result being highlighted.",
+    )
+
+    registry.validate_fallback_candidates()
+
 
 def test_registry_rejects_duplicate_or_blank_metadata() -> None:
     registry = VisualTypeRegistry()

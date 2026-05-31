@@ -83,6 +83,12 @@ class InvalidSolutionPlanError(PermanentFailure):
     stage = StageName.SOLVE
 
 
+class InvalidStageOutputError(PermanentFailure):
+    """A pipeline stage produced output that violates the next stage contract."""
+
+    user_error_code = UserErrorCode.UNKNOWN
+
+
 _PERMANENT_TYPES = (PermanentFailure,)
 _TRANSIENT_TYPES = (TransientFailure, TimeoutError, MemoryError, ConnectionError)
 

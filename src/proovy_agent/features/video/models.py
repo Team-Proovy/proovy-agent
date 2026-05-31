@@ -7,6 +7,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from proovy_agent.common.tts.models import (
+    WordTimestamp,  # noqa: TC001 - Pydantic needs runtime type
+)
+
 FailureKind = Literal["permanent", "transient", "unknown"]
 
 
@@ -302,6 +306,9 @@ class VideoScript(_VideoBaseModel):
         expected = list(range(1, len(self.segments) + 1))
         if orders != expected:
             raise ValueError("segment order values must be consecutive starting at 1")
+        segment_ids = [segment.segment_id for segment in self.segments]
+        if len(segment_ids) != len(set(segment_ids)):
+            raise ValueError("segment_id values must be unique")
         return self
 
 
@@ -312,7 +319,7 @@ class SegmentTTSResult(_VideoBaseModel):
     narration: str
     audio_path: str | None = None
     duration_seconds: float | None = Field(default=None, ge=0.0)
-    word_timestamps: list[dict[str, Any]] = Field(default_factory=list)
+    word_timestamps: list[WordTimestamp] = Field(default_factory=list)
 
     @field_validator("segment_id")
     @classmethod
@@ -382,6 +389,20 @@ class VideoPipelineResult(_VideoBaseModel):
     @classmethod
     def result_job_id_not_empty(cls, value: str) -> str:
         return _strip_required(value, "job_id")
+
+    @model_validator(mode="after")
+    def validate_stage_segment_alignment(self) -> VideoPipelineResult:
+        """Ensure script, TTS, and render outputs describe the same segment sequence."""
+        script_segment_ids = [segment.segment_id for segment in self.script.segments]
+        tts_segment_ids = [result.segment_id for result in self.tts_results]
+        rendered_segment_ids = [segment.segment_id for segment in self.rendered_segments]
+        if tts_segment_ids != script_segment_ids:
+            raise ValueError("tts_results segment_id values must match script segment order")
+        if rendered_segment_ids != script_segment_ids:
+            raise ValueError("rendered_segments segment_id values must match script segment order")
+        if self.final_video.rendered_segment_count != len(self.rendered_segments):
+            raise ValueError("rendered_segment_count must match rendered_segments length")
+        return self
 
 
 class UserDiagnostic(_VideoBaseModel):

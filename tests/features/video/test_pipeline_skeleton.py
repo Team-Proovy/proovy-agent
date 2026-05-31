@@ -1,17 +1,29 @@
 """Video pipeline skeleton tests."""
 
+from pydantic import ValidationError
 import pytest
 
-from proovy_agent.features.video.exceptions import InvalidSolutionPlanError
+from proovy_agent.features.video.exceptions import (
+    InvalidSolutionPlanError,
+    InvalidStageOutputError,
+    classify_failure,
+)
 from proovy_agent.features.video.models import (
+    FinalVideoArtifact,
+    RenderedSegment,
+    ScriptSegment,
+    SegmentTTSResult,
     SolutionPlan,
     SolutionStep,
     StageName,
+    UserErrorCode,
     VideoJobInput,
     VideoPipelineJob,
+    VideoPipelineResult,
+    VideoScript,
 )
-from proovy_agent.features.video.pipeline import StageContext, run_job
-from proovy_agent.features.video.pipeline.stages import stage_solve
+from proovy_agent.features.video.pipeline import StageContext, StageEvent, run_job
+from proovy_agent.features.video.pipeline.stages import stage_render, stage_solve
 from proovy_agent.features.video.visual_types import VisualTypeRegistry
 
 
@@ -37,6 +49,37 @@ def _job(solution_plan: SolutionPlan | None = None) -> VideoPipelineJob:
             problem_text="x - 3 = 2를 풀어라.",
             solution_plan=solution_plan,
         ),
+    )
+
+
+def _raw_job(solution_plan: object) -> VideoPipelineJob:
+    return VideoPipelineJob.model_construct(
+        job_id="job-1",
+        input_snapshot=VideoJobInput.model_construct(
+            problem_text="x - 3 = 2를 풀어라.",
+            solution_plan=solution_plan,
+        ),
+    )
+
+
+def _script() -> VideoScript:
+    return VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="dry_run",
+                narration="양변에 3을 더합니다.",
+            ),
+            ScriptSegment(
+                segment_id="step-2",
+                order=2,
+                visual_type="dry_run",
+                narration="최종 답을 강조합니다.",
+            ),
+        ],
+        final_answer="x = 5",
     )
 
 
@@ -74,6 +117,23 @@ async def test_orchestrator_emits_stable_stage_boundaries() -> None:
     ]
 
 
+async def test_progress_handler_failure_marks_stage_failed() -> None:
+    async def fail_on_solve_completed(event: StageEvent) -> None:
+        if event.stage is StageName.SOLVE and event.status == "completed":
+            raise RuntimeError("progress db write failed")
+
+    ctx = StageContext(progress_handler=fail_on_solve_completed)
+
+    with pytest.raises(RuntimeError, match="progress db write failed"):
+        await run_job(_job(_sample_plan()), ctx=ctx)
+
+    assert [(event.stage, event.status) for event in ctx.stage_events] == [
+        (StageName.SOLVE, "started"),
+        (StageName.SOLVE, "completed"),
+        (StageName.SOLVE, "failed"),
+    ]
+
+
 async def test_stage_solve_validates_injected_plan_without_re_solve() -> None:
     class ExplodingLLM:
         def __getattribute__(self, name: str) -> object:
@@ -96,3 +156,96 @@ async def test_missing_solution_plan_fails_at_solve_stage() -> None:
         (StageName.SOLVE, "started"),
         (StageName.SOLVE, "failed"),
     ]
+
+
+async def test_invalid_solution_plan_validation_error_maps_to_input_failure() -> None:
+    ctx = StageContext()
+
+    with pytest.raises(InvalidSolutionPlanError, match="solution_plan is invalid") as exc_info:
+        await run_job(_raw_job({"title": "깨진 풀이", "steps": []}), ctx=ctx)
+
+    assert exc_info.value.user_error_code is UserErrorCode.INVALID_INPUT
+    assert classify_failure(exc_info.value) == "permanent"
+    assert [(event.stage, event.status) for event in ctx.stage_events] == [
+        (StageName.SOLVE, "started"),
+        (StageName.SOLVE, "failed"),
+    ]
+
+
+async def test_stage_render_rejects_missing_or_duplicate_tts_segments() -> None:
+    script = _script()
+    ctx = StageContext()
+
+    with pytest.raises(InvalidStageOutputError, match="tts_results must match"):
+        await stage_render(
+            script,
+            [SegmentTTSResult(segment_id="step-1", narration="양변에 3을 더합니다.")],
+            job=_job(_sample_plan()),
+            ctx=ctx,
+        )
+
+    with pytest.raises(InvalidStageOutputError, match="tts_results must match"):
+        await stage_render(
+            script,
+            [
+                SegmentTTSResult(segment_id="step-1", narration="양변에 3을 더합니다."),
+                SegmentTTSResult(segment_id="step-1", narration="중복된 결과입니다."),
+            ],
+            job=_job(_sample_plan()),
+            ctx=ctx,
+        )
+
+
+def test_video_pipeline_result_validates_stage_segment_alignment() -> None:
+    script = _script()
+    aligned_tts_results = [
+        SegmentTTSResult(segment_id="step-1", narration="양변에 3을 더합니다."),
+        SegmentTTSResult(segment_id="step-2", narration="최종 답을 강조합니다."),
+    ]
+    aligned_rendered_segments = [
+        RenderedSegment(segment_id="step-1", visual_type="dry_run"),
+        RenderedSegment(segment_id="step-2", visual_type="dry_run"),
+    ]
+
+    result = VideoPipelineResult(
+        job_id="job-1",
+        solution_plan=_sample_plan(),
+        script=script,
+        tts_results=aligned_tts_results,
+        rendered_segments=aligned_rendered_segments,
+        final_video=FinalVideoArtifact(
+            output_path="dry-run.mp4",
+            rendered_segment_count=2,
+        ),
+    )
+
+    assert result.final_video.rendered_segment_count == 2
+
+    with pytest.raises(ValidationError, match="tts_results segment_id values"):
+        VideoPipelineResult(
+            job_id="job-1",
+            solution_plan=_sample_plan(),
+            script=script,
+            tts_results=[
+                SegmentTTSResult(segment_id="step-2", narration="순서가 바뀐 결과입니다."),
+                SegmentTTSResult(segment_id="step-1", narration="순서가 바뀐 결과입니다."),
+            ],
+            rendered_segments=aligned_rendered_segments,
+            final_video=FinalVideoArtifact(
+                output_path="dry-run.mp4",
+                rendered_segment_count=2,
+            ),
+        )
+
+    with pytest.raises(ValidationError, match="rendered_segment_count"):
+        VideoPipelineResult(
+            job_id="job-1",
+            solution_plan=_sample_plan(),
+            script=script,
+            tts_results=aligned_tts_results,
+            rendered_segments=aligned_rendered_segments,
+            final_video=FinalVideoArtifact(
+                output_path="dry-run.mp4",
+                rendered_segment_count=1,
+            ),
+        )
