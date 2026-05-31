@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _ALLOWED_MSGPACK_MODULES = [
     ("proovy_agent.graph.state", "PlanStep"),
     ("proovy_agent.graph.state", "CreditEntry"),
+    ("proovy_agent.graph.state", "VideoJobRef"),
 ]
 
 
