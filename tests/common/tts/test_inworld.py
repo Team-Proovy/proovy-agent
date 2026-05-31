@@ -13,6 +13,7 @@ from proovy_agent.common.tts.exceptions import InworldTimestampFormatError, TTSE
 from proovy_agent.common.tts.inworld import (
     InworldTTS,
     _build_payload,
+    _ffprobe_duration_seconds,
     _parse_inworld_word_timestamps,
 )
 
@@ -80,6 +81,20 @@ def test_parse_inworld_word_alignment_rejects_empty_timestamp_info() -> None:
         _parse_inworld_word_timestamps({})
 
 
+def test_parse_inworld_word_alignment_wraps_invalid_timings() -> None:
+    """Invalid provider timing values are reported as TTS timestamp format errors."""
+    timestamp_info = {
+        "wordAlignment": {
+            "words": ["엑스"],
+            "wordStartTimeSeconds": ["not-a-number"],
+            "wordEndTimeSeconds": [0.4],
+        }
+    }
+
+    with pytest.raises(InworldTimestampFormatError, match="invalid word timing"):
+        _parse_inworld_word_timestamps(timestamp_info)
+
+
 def test_parse_inworld_word_alignment_supports_legacy_word_objects() -> None:
     """The design-doc object-array shape remains accepted for compatibility."""
     timestamp_info = {
@@ -123,7 +138,7 @@ async def test_synthesize_maps_word_timestamps_from_response_dump(
 
     monkeypatch.setattr(
         "proovy_agent.common.tts.inworld._ffprobe_duration_seconds",
-        lambda _path: 2.25,
+        lambda _path: 1.0,
     )
 
     def _fake_convert(src: Path, dst: Path) -> None:
@@ -167,6 +182,24 @@ async def test_synthesize_maps_word_timestamps_from_response_dump(
     assert call_kwargs["json"]["timestampType"] == "WORD"
 
 
+def test_ffprobe_duration_failure_raises_tts_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ffprobe failures fail the TTS result instead of returning a fake duration."""
+
+    def _raise_file_not_found(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(
+        "proovy_agent.common.tts.inworld.subprocess.run",
+        _raise_file_not_found,
+    )
+
+    with pytest.raises(TTSError, match="ffprobe is required"):
+        _ffprobe_duration_seconds(tmp_path / "audio.mp3")
+
+
 @pytest.mark.asyncio
 async def test_synthesize_requires_timestamp_info_for_word_requests(
     monkeypatch: pytest.MonkeyPatch,
@@ -197,3 +230,97 @@ async def test_synthesize_requires_timestamp_info_for_word_requests(
             "이차방정식은 영입니다.",
             output_path=tmp_path / "segment.wav",
         )
+
+
+@pytest.mark.asyncio
+async def test_synthesize_requires_valid_words_for_word_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A WORD response with only blank tokens is treated as malformed."""
+    monkeypatch.setenv("INWORLD_TTS_API_KEY", "dummy")
+    settings = Settings(_env_file=None)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = ""
+    mock_response.json.return_value = {
+        "audioContent": "ZmFrZS1tcDMtYnl0ZXM=",
+        "timestampInfo": {
+            "wordAlignment": {
+                "words": ["", " "],
+                "wordStartTimeSeconds": [0.0, 0.1],
+                "wordEndTimeSeconds": [0.1, 0.1],
+            }
+        },
+    }
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "proovy_agent.common.tts.inworld.httpx.AsyncClient",
+            return_value=mock_client,
+        ),
+        pytest.raises(InworldTimestampFormatError, match="valid word timings"),
+    ):
+        await InworldTTS(settings).synthesize(
+            "이차방정식은 영입니다.",
+            output_path=tmp_path / "segment.wav",
+        )
+
+
+@pytest.mark.asyncio
+async def test_synthesize_retries_transient_inworld_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Transient 429/5xx responses are retried before failing the TTS call."""
+    monkeypatch.setenv("INWORLD_TTS_API_KEY", "dummy")
+    settings = Settings(_env_file=None)
+    dump = _load_response_dump()
+
+    monkeypatch.setattr(
+        "proovy_agent.common.tts.inworld._ffprobe_duration_seconds",
+        lambda _path: 2.25,
+    )
+
+    def _fake_convert(_src: Path, dst: Path) -> None:
+        dst.write_bytes(b"fake-wav")
+
+    monkeypatch.setattr(
+        "proovy_agent.common.tts.inworld._ffmpeg_convert_to_wav",
+        _fake_convert,
+    )
+
+    transient_response = MagicMock()
+    transient_response.status_code = 500
+    transient_response.text = "temporary"
+
+    success_response = MagicMock()
+    success_response.status_code = 200
+    success_response.text = ""
+    success_response.json.return_value = dump
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=[transient_response, success_response])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(InworldTTS, "_sleep_before_retry", sleep_mock)
+
+    with patch(
+        "proovy_agent.common.tts.inworld.httpx.AsyncClient",
+        return_value=mock_client,
+    ):
+        result = await InworldTTS(settings).synthesize(
+            "이차방정식은 영입니다.",
+            output_path=tmp_path / "segment.wav",
+        )
+
+    assert result.duration_seconds == 2.25
+    assert mock_client.post.await_count == 2
+    sleep_mock.assert_awaited_once()

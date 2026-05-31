@@ -11,6 +11,7 @@ import subprocess
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
+from pydantic import ValidationError
 
 from proovy_agent.common.tts.base import TTSProvider
 from proovy_agent.common.tts.exceptions import InworldTimestampFormatError, TTSError
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 INWORLD_VOICE_URL = "https://api.inworld.ai/tts/v1/voice"
+_MAX_ATTEMPTS = 5
+_BASE_BACKOFF_SECONDS = 1.5
+_MAX_BACKOFF_SECONDS = 30.0
 
 
 class _InworldSettingsProtocol(Protocol):
@@ -56,15 +60,21 @@ def _ffprobe_duration_seconds(path: Path) -> float:
         )
         meta = json.loads(completed.stdout)
         return float(meta["format"]["duration"])
+    except FileNotFoundError as exc:
+        raise TTSError(
+            "ffprobe is required to measure Inworld TTS audio duration",
+            detail=str(exc),
+        ) from exc
     except (
-        FileNotFoundError,
         subprocess.CalledProcessError,
         KeyError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
-        logger.warning("ffprobe failed, using fallback duration: %s", exc)
-        return 1.0
+        raise TTSError(
+            "ffprobe failed while measuring Inworld TTS audio duration",
+            detail=str(exc)[:800],
+        ) from exc
 
 
 def _ffmpeg_convert_to_wav(src: Path, dst: Path) -> None:
@@ -162,13 +172,7 @@ def _parse_parallel_word_alignment(
         normalized_word = _normalize_word(word)
         if not normalized_word:
             continue
-        timestamps.append(
-            WordTimestamp(
-                word=normalized_word,
-                start=float(start),
-                end=float(end),
-            )
-        )
+        timestamps.append(_make_word_timestamp(normalized_word, start, end))
     return timestamps
 
 
@@ -182,14 +186,22 @@ def _parse_legacy_word_objects(words: Sequence[Any]) -> list[WordTimestamp]:
             continue
         start = item.get("startTime", item.get("start_time", item.get("start", 0)))
         end = item.get("endTime", item.get("end_time", item.get("end", 0)))
-        timestamps.append(
-            WordTimestamp(
-                word=normalized_word,
-                start=float(start),
-                end=float(end),
-            )
-        )
+        timestamps.append(_make_word_timestamp(normalized_word, start, end))
     return timestamps
+
+
+def _make_word_timestamp(word: str, start: Any, end: Any) -> WordTimestamp:
+    try:
+        return WordTimestamp(
+            word=word,
+            start=float(start),
+            end=float(end),
+        )
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise InworldTimestampFormatError(
+            "Inworld WORD timestamp contains invalid word timing",
+            detail=f"word={word!r}, start={start!r}, end={end!r}",
+        ) from exc
 
 
 def _mapping_value(
@@ -263,6 +275,10 @@ class InworldTTS(TTSProvider):
         ):
             raise TTSError("Inworld TTS response missing timestampInfo.wordAlignment")
         word_timestamps = _parse_inworld_word_timestamps(timestamp_info)
+        if payload.get("timestampType") == "WORD" and not word_timestamps:
+            raise InworldTimestampFormatError(
+                "Inworld WORD timestamp response did not contain any valid word timings"
+            )
 
         mp3_path = output_path.with_suffix(".mp3")
         await asyncio.to_thread(mp3_path.write_bytes, audio_bytes)
@@ -271,6 +287,9 @@ class InworldTTS(TTSProvider):
             await asyncio.to_thread(_ffmpeg_convert_to_wav, mp3_path, output_path)
         finally:
             await asyncio.to_thread(mp3_path.unlink, missing_ok=True)
+
+        if word_timestamps:
+            duration = max(duration, word_timestamps[-1].end)
 
         return TTSResult(
             audio_path=output_path,
@@ -285,24 +304,8 @@ class InworldTTS(TTSProvider):
             "User-Agent": "proovy-agent",
         }
         timeout = httpx.Timeout(self._settings.video_tts_timeout_seconds)
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    INWORLD_VOICE_URL,
-                    headers=headers,
-                    json=payload,
-                )
-        except httpx.HTTPError as exc:
-            raise TTSError(
-                f"Inworld TTS request failed: {exc}",
-                detail=str(exc)[:800],
-            ) from exc
-
-        if response.status_code >= 400:
-            raise TTSError(
-                f"Inworld TTS HTTP {response.status_code}",
-                detail=(response.text or "")[:800],
-            )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await self._post_with_retry(client, headers, payload)
 
         try:
             data = response.json()
@@ -317,3 +320,66 @@ class InworldTTS(TTSProvider):
                 detail=repr(type(data)),
             )
         return data
+
+    async def _post_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        last_response: httpx.Response | None = None
+        last_error: httpx.HTTPError | None = None
+
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                response = await client.post(
+                    INWORLD_VOICE_URL,
+                    headers=headers,
+                    json=payload,
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt >= _MAX_ATTEMPTS - 1:
+                    break
+                await self._sleep_before_retry(attempt, f"request error: {exc}")
+                continue
+
+            if response.status_code == 429 or response.status_code >= 500:
+                last_response = response
+                if attempt >= _MAX_ATTEMPTS - 1:
+                    break
+                await self._sleep_before_retry(attempt, f"HTTP {response.status_code}")
+                continue
+
+            if response.status_code >= 400:
+                raise TTSError(
+                    f"Inworld TTS HTTP {response.status_code}",
+                    detail=(response.text or "")[:800],
+                )
+            return response
+
+        if last_response is not None:
+            raise TTSError(
+                f"Inworld TTS HTTP {last_response.status_code} after retries",
+                detail=(last_response.text or "")[:800],
+            )
+        if last_error is not None:
+            raise TTSError(
+                f"Inworld TTS request failed after retries: {last_error}",
+                detail=str(last_error)[:800],
+            ) from last_error
+        raise TTSError("Inworld TTS request failed with no response")
+
+    async def _sleep_before_retry(self, attempt: int, reason: str) -> None:
+        wait_seconds = min(
+            _MAX_BACKOFF_SECONDS,
+            _BASE_BACKOFF_SECONDS * (2**attempt),
+        )
+        logger.warning(
+            "Inworld TTS transient failure (%s), retrying in %.1fs (%s/%s)",
+            reason,
+            wait_seconds,
+            attempt + 2,
+            _MAX_ATTEMPTS,
+        )
+        await asyncio.sleep(wait_seconds)
