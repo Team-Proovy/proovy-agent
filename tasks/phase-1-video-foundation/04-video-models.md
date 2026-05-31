@@ -7,7 +7,8 @@ issue: "76"
 depends_on: []
 blocks: ["1.05", "1.06", "2.01"]
 estimate: "S"
-status: "todo"
+status: "done"
+completed_at: 2026-05-31
 owner: ""
 sprint: ""
 ---
@@ -24,18 +25,18 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] 설계 §2.2 입력 계약(VideoJobInput) / §2.2.1 SolutionPlan / §2.2.2 VideoHints 재확인
+- [x] 설계 §2.2 입력 계약(VideoJobInput) / §2.2.1 SolutionPlan / §2.2.2 VideoHints 재확인
 
 ## 구현 체크리스트
 
-- [ ] `features/video/models.py`: `SolutionPlan`, `SolutionStep`, `VideoJobInput`, `VideoHints`, `DirectorBriefPolicy`, `VideoOptions`, `UserErrorCode`
-- [ ] `features/video/exceptions.py`: `PipelineError` 계열
-- [ ] 모델 직렬화 / 검증 단위 테스트
+- [x] `features/video/models.py`: `SolutionPlan`, `SolutionStep`, `VideoJobInput`, `VideoHints`, `DirectorBriefPolicy`, `VideoOptions`, `UserErrorCode`
+- [x] `features/video/exceptions.py`: `PipelineError` 계열
+- [x] 모델 직렬화 / 검증 단위 테스트
 
 ## Definition of Done
 
-- [ ] 모델 import + 검증 테스트 통과
-- [ ] 자동화된 테스트 통과
+- [x] 모델 import + 검증 테스트 통과
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 
