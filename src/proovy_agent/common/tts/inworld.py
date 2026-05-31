@@ -67,6 +67,7 @@ def _ffprobe_duration_seconds(path: Path) -> float:
         ) from exc
     except (
         subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
         KeyError,
         ValueError,
         json.JSONDecodeError,
@@ -91,10 +92,10 @@ def _ffmpeg_convert_to_wav(src: Path, dst: Path) -> None:
             "ffmpeg is required to convert Inworld TTS audio to WAV.",
             detail=str(exc),
         ) from exc
-    except subprocess.CalledProcessError as exc:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise TTSError(
             "ffmpeg failed while converting Inworld TTS audio",
-            detail=(exc.stderr or "")[:500],
+            detail=str(exc)[:800],
         ) from exc
 
 
@@ -247,7 +248,11 @@ class InworldTTS(TTSProvider):
         if not text.strip():
             raise TTSError("TTS text is empty")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            output_path.parent.mkdir,
+            parents=True,
+            exist_ok=True,
+        )
         payload = _build_payload(self._settings, text)
         data = await self._post_synthesize(payload)
 
@@ -268,17 +273,18 @@ class InworldTTS(TTSProvider):
         if not audio_bytes:
             raise TTSError("Inworld TTS returned empty audio")
 
+        timestamp_type = str(payload.get("timestampType") or "").strip().upper()
         timestamp_info = data.get("timestampInfo")
-        if payload.get("timestampType") == "WORD" and not isinstance(
-            timestamp_info,
-            Mapping,
-        ):
-            raise TTSError("Inworld TTS response missing timestampInfo.wordAlignment")
-        word_timestamps = _parse_inworld_word_timestamps(timestamp_info)
-        if payload.get("timestampType") == "WORD" and not word_timestamps:
-            raise InworldTimestampFormatError(
-                "Inworld WORD timestamp response did not contain any valid word timings"
-            )
+        if timestamp_type == "WORD":
+            if not isinstance(timestamp_info, Mapping):
+                raise TTSError("Inworld TTS response missing timestampInfo.wordAlignment")
+            word_timestamps = _parse_inworld_word_timestamps(timestamp_info)
+            if not word_timestamps:
+                raise InworldTimestampFormatError(
+                    "Inworld WORD timestamp response did not contain any valid word timings"
+                )
+        else:
+            word_timestamps = []
 
         mp3_path = output_path.with_suffix(".mp3")
         await asyncio.to_thread(mp3_path.write_bytes, audio_bytes)
