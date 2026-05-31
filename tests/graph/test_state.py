@@ -1,6 +1,6 @@
 """ProovyState schema and checkpoint compatibility tests."""
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 
 from proovy_agent.common.checkpoint.saver import _ALLOWED_MSGPACK_MODULES
 from proovy_agent.graph.state import ProovyState, VideoJobRef
+
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
 
 
 def test_state_roundtrips_with_video_and_credit_fields() -> None:
@@ -24,7 +27,6 @@ def test_state_roundtrips_with_video_and_credit_fields() -> None:
                 job_id="job-1",
                 status="running",
                 progress={"segments_done": 2, "segments_total": 5},
-                artifact_url="https://example.test/signed-video-url",
             )
         ],
     )
@@ -58,7 +60,7 @@ class _OldCheckpointState(BaseModel):
     messages: Annotated[list, add_messages] = Field(default_factory=list)
 
 
-def _old_checkpoint_graph(checkpointer: InMemorySaver):
+def _old_checkpoint_graph(checkpointer: InMemorySaver) -> "CompiledStateGraph":
     def noop(_state: _OldCheckpointState) -> dict:
         return {}
 
@@ -69,7 +71,7 @@ def _old_checkpoint_graph(checkpointer: InMemorySaver):
     return builder.compile(checkpointer=checkpointer)
 
 
-def _new_checkpoint_graph(checkpointer: InMemorySaver):
+def _new_checkpoint_graph(checkpointer: InMemorySaver) -> "CompiledStateGraph":
     def append_video_job(state: ProovyState) -> dict:
         assert not hasattr(state, "reservation_id")
         assert not hasattr(state, "credit_reserved")

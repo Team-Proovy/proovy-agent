@@ -38,7 +38,6 @@ class VideoJobRef(BaseModel):
     job_id: str
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
     progress: dict[str, int] = Field(default_factory=dict)
-    artifact_url: str | None = None
 
 
 class ProovyState(BaseModel):
@@ -78,7 +77,8 @@ class ProovyState(BaseModel):
     # 전체 state 입력(기본값 0)에 덮어써지지 않고 누적된다 — 턴 단위 정산 경계.
     settled_count: Annotated[int, operator.add] = 0
 
-    # 영상 잡 참조 — 상세 진행/결과의 원본은 DB, state에는 thread 복구용 참조만 누적한다.
+    # 영상 잡 참조 — state에는 job handle만 누적한다. 재접속/진행/결과 URL은
+    # status API가 DB의 video_jobs 원본을 조회해 응답한다.
     video_jobs: Annotated[list[VideoJobRef], operator.add] = Field(default_factory=list)
 
     # 표시 데이터 단일 소스
