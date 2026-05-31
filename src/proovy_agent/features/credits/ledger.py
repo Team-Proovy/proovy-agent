@@ -240,11 +240,11 @@ class CreditLedger:
         *,
         job_table: str = "video_jobs",
     ) -> CreditRefundResult:
-        """Apply a video refund once, guarded by the job's current terminal status.
+        """Apply a video refund once for failed/canceled terminal jobs.
 
         The referenced job table must expose `id`, `user_id`, `status`, and
         `refund_applied_at` columns. The guarded `UPDATE` is the idempotency key and
-        the `status != 'succeeded'` race guard described by ADR 0004.
+        the terminal-status race guard described by ADR 0004.
         """
         normalized = normalize_credit_amount(amount)
         table = sql.Identifier(job_table)
@@ -257,7 +257,7 @@ class CreditLedger:
                        SET refund_applied_at = COALESCE(refund_applied_at, NOW())
                      WHERE id = %s
                        AND refund_applied_at IS NULL
-                       AND status <> 'succeeded'
+                       AND status IN ('failed', 'canceled')
                     RETURNING user_id
                     """
                 ).format(table=table),
@@ -279,7 +279,12 @@ class CreditLedger:
                         applied=False,
                         skipped_reason="missing_target",
                     )
-                reason = "succeeded" if target["status"] == "succeeded" else "already_refunded"
+                if target["status"] == "succeeded":
+                    reason = "succeeded"
+                elif target["refund_applied_at"] is not None:
+                    reason = "already_refunded"
+                else:
+                    reason = "not_refundable_status"
                 return CreditRefundResult(
                     applied=False,
                     user_id=target["user_id"],

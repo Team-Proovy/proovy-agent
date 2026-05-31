@@ -230,6 +230,27 @@ async def test_refund_skips_succeeded_job(database_url: str) -> None:
         assert balance.balance == Decimal("10")
 
 
+async def test_refund_skips_running_job(database_url: str) -> None:
+    user_id = f"credit-running-{uuid4()}"
+    job_id = uuid4()
+    job_table = f"credit_test_jobs_{uuid4().hex}"
+
+    async with _connect(database_url) as conn:
+        await setup_credit_ledger(conn)
+        await _create_job_table(conn, job_table)
+        ledger = CreditLedger(conn)
+        await ledger.upsert_account(user_id, "10")
+        await _insert_job(conn, job_table, job_id=job_id, user_id=user_id, status="running")
+
+        result = await ledger.refund_if_not_succeeded(job_id, "10", job_table=job_table)
+
+        assert result.applied is False
+        assert result.skipped_reason == "not_refundable_status"
+        assert await _job_refund_applied(conn, job_table, job_id) is False
+        balance = await ledger.get_balance(user_id)
+        assert balance.balance == Decimal("10")
+
+
 async def test_refund_waits_for_success_terminal_race(database_url: str) -> None:
     user_id = f"credit-race-{uuid4()}"
     job_id = uuid4()

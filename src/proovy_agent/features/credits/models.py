@@ -11,7 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 from proovy_agent.features.credits.exceptions import InvalidCreditAmountError
 
 CreditAmount = Decimal | int | str
-RefundSkipReason = Literal["already_refunded", "succeeded", "missing_target"]
+RefundSkipReason = Literal[
+    "already_refunded",
+    "succeeded",
+    "not_refundable_status",
+    "missing_target",
+]
 
 
 def normalize_credit_amount(value: CreditAmount, *, allow_zero: bool = False) -> Decimal:
