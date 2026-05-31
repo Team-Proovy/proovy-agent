@@ -9,8 +9,9 @@ from proovy_agent.graph.agents.core_solver.agent import (
     _code_execute_succeeded,
     _phase1_verify,
     _trim_tool_messages,
+    core_solver,
 )
-from proovy_agent.graph.state import ProovyState
+from proovy_agent.graph.state import PlanStep, ProovyState
 
 
 def _state(**kwargs: object) -> ProovyState:
@@ -139,3 +140,90 @@ async def test_phase1_failed_code_execute_does_not_set_verified() -> None:
 
     assert not verified
     assert execute_count == 1
+
+
+# ── core_solver explanation_mode ─────────────────────────────────────────────
+
+
+def _mock_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.create_executor = AsyncMock(return_value=object())
+    manager.destroy_executor = AsyncMock()
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_core_solver_brief_skips_phase2_and_exposes_verified_solution() -> None:
+    """brief 모드는 Phase 2 토큰 설명 없이 verified_solution을 content로 노출한다."""
+    phase1 = AsyncMock(
+        return_value=(
+            "검증 요약",
+            [AIMessage(content="검증된 풀이", tool_calls=[])],
+            1,
+            True,
+            1,
+            0,
+        )
+    )
+    phase2 = AsyncMock(return_value=AIMessage(content="자세한 설명"))
+    manager = _mock_manager()
+    state = _state(
+        explanation_mode="brief",
+        plan=[PlanStep(action="solve", description="수학 문제 풀이", status="running")],
+    )
+
+    with (
+        patch("proovy_agent.graph.agents.core_solver.agent.get_daytona_client", return_value=None),
+        patch("proovy_agent.graph.agents.core_solver.agent.SandboxManager", return_value=manager),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase1_verify", phase1),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase2_explain", phase2),
+    ):
+        result = await core_solver(state)
+
+    phase2.assert_not_awaited()
+    message = result["messages"][0]
+    assert message.content == "검증된 풀이"
+    assert message.metadata == {"kind": "verified_solution", "display": "content"}
+    assert all(entry.action != "llm_call_explain" for entry in result["credit_log"])
+    assert result["current_phase"] == "verify"
+    assert result["plan"][0].status == "done"
+    manager.destroy_executor.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_core_solver_full_runs_phase2_and_hides_verified_solution() -> None:
+    """full 모드는 verified_solution을 숨기고 Phase 2 설명을 계속 생성한다."""
+    phase1 = AsyncMock(
+        return_value=(
+            "검증 요약",
+            [AIMessage(content="검증된 풀이", tool_calls=[])],
+            1,
+            True,
+            1,
+            0,
+        )
+    )
+    explain_message = AIMessage(content="자세한 설명", metadata={"display": "content"})
+    phase2 = AsyncMock(return_value=explain_message)
+    manager = _mock_manager()
+    state = _state(
+        explanation_mode="full",
+        plan=[PlanStep(action="solve", description="수학 문제 풀이", status="running")],
+    )
+
+    with (
+        patch("proovy_agent.graph.agents.core_solver.agent.get_daytona_client", return_value=None),
+        patch("proovy_agent.graph.agents.core_solver.agent.SandboxManager", return_value=manager),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase1_verify", phase1),
+        patch("proovy_agent.graph.agents.core_solver.agent._phase2_explain", phase2),
+    ):
+        result = await core_solver(state)
+
+    phase2.assert_awaited_once()
+    assert result["messages"][0].metadata == {
+        "kind": "verified_solution",
+        "display": "hidden",
+    }
+    assert result["messages"][1] == explain_message
+    assert any(entry.action == "llm_call_explain" for entry in result["credit_log"])
+    assert result["current_phase"] == "explain"

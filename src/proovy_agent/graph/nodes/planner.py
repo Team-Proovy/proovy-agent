@@ -30,6 +30,11 @@ difficulty 기준:
 - medium: 방정식, 확률/통계 기초, 수열
 - hard: 미적분, 선형대수, 고급 통계, 증명
 
+explanation_mode 기준:
+- "brief": 영상이 유일한 결과물인 요청. 예: "영상으로 설명해줘", "해설 영상 만들어줘", "영상만 보여줘"
+- "full": 텍스트 풀이가 결과물인 요청. 예: "풀어줘", "자세히 설명해줘", "답 알려줘"
+- 텍스트 풀이와 영상을 모두 원하는 요청 또는 모호한 요청은 반드시 "full"
+
 use_page: 이미지·그래프·코드 포함 예상이면 true, 짧은 풀이면 false"""
 
 
@@ -42,6 +47,16 @@ class _PlannerOutput(BaseModel):
     steps: list[_StepInput]
     difficulty: Literal["easy", "medium", "hard"]
     use_page: bool
+    explanation_mode: Literal["full", "brief"] = "full"
+
+
+def _resolve_explanation_mode(
+    requested: Literal["full", "brief"],
+    plan: list[PlanStep],
+) -> Literal["full", "brief"]:
+    if requested == "brief" and any(step.action == "video" for step in plan):
+        return "brief"
+    return "full"
 
 
 async def planner(state: ProovyState) -> dict:
@@ -55,6 +70,7 @@ async def planner(state: ProovyState) -> dict:
         plan.insert(0, PlanStep(action="solve", description="수학 문제 풀이"))
 
     selected_model = _DIFFICULTY_TO_MODEL[result.difficulty]
+    explanation_mode = _resolve_explanation_mode(result.explanation_mode, plan)
 
     emitter = current_emitter.get()
     if emitter and result.use_page:
@@ -73,5 +89,6 @@ async def planner(state: ProovyState) -> dict:
         "difficulty": result.difficulty,
         "selected_model": selected_model,
         "use_page": result.use_page,
+        "explanation_mode": explanation_mode,
         "credit_log": [CreditEntry(node="planner", action="llm_call", model="flash", cost=1.0)],
     }

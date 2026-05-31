@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -76,6 +77,18 @@ def _code_execute_succeeded(result: str) -> bool:
         return False
     m = re.search(r"exit_code:\s*(-?\d+)", result)
     return not (m and int(m.group(1)) != 0)
+
+
+def _build_verified_solution_message(
+    content: object,
+    explanation_mode: Literal["full", "brief"],
+) -> AIMessage:
+    """CoreSolver의 검증 산출물을 downstream이 찾을 수 있는 메시지로 남긴다."""
+    display = "content" if explanation_mode == "brief" else "hidden"
+    return AIMessage(
+        content=content,
+        metadata={"kind": "verified_solution", "display": display},
+    )
 
 
 async def _phase1_verify(
@@ -219,23 +232,20 @@ async def core_solver(state: ProovyState) -> dict:
             _exc.sse_emitted = True  # type: ignore[attr-defined]
             raise _exc
 
-        # Phase 1 결과를 messages에 추가 (progress 태그)
-        if p1_messages:
-            last_ai = next(
-                (m for m in reversed(p1_messages) if isinstance(m, AIMessage) and not m.tool_calls),
-                None,
-            )
-            if last_ai:
-                new_messages.append(
-                    AIMessage(
-                        content=last_ai.content,
-                        metadata={"display": "progress"},
-                    )
-                )
+        # Phase 1 검증 산출물은 video/pdf가 재사용하는 중립 verified_solution이다.
+        last_ai = next(
+            (m for m in reversed(p1_messages) if isinstance(m, AIMessage) and not m.tool_calls),
+            None,
+        )
+        verified_content = last_ai.content if last_ai else verified_summary
+        new_messages.append(
+            _build_verified_solution_message(verified_content, state.explanation_mode)
+        )
 
-        # Phase 2: explain
-        explain_msg = await _phase2_explain(state, verified_summary, emitter)
-        new_messages.append(explain_msg)
+        # Phase 2: explain. 영상 중심 brief 모드는 중복 텍스트 스트리밍을 생략한다.
+        if state.explanation_mode == "full":
+            explain_msg = await _phase2_explain(state, verified_summary, emitter)
+            new_messages.append(explain_msg)
 
         # 크레딧: Phase 1 LLM 반복 횟수
         model_cost = _MODEL_COST.get(state.selected_model, 1.0)
@@ -247,15 +257,15 @@ async def core_solver(state: ProovyState) -> dict:
                 cost=model_cost * llm_call_count,
             )
         )
-        # Phase 2 LLM 호출
-        credit_entries.append(
-            CreditEntry(
-                node="core_solver",
-                action="llm_call_explain",
-                model=state.selected_model,
-                cost=model_cost,
+        if state.explanation_mode == "full":
+            credit_entries.append(
+                CreditEntry(
+                    node="core_solver",
+                    action="llm_call_explain",
+                    model=state.selected_model,
+                    cost=model_cost,
+                )
             )
-        )
         # code_generate Flash 호출 (도구 내부 LLM)
         for _ in range(codegen_count):
             credit_entries.append(
@@ -290,6 +300,6 @@ async def core_solver(state: ProovyState) -> dict:
     return {
         "messages": new_messages,
         "credit_log": credit_entries,
-        "current_phase": "explain",
+        "current_phase": "explain" if state.explanation_mode == "full" else "verify",
         "plan": plan,
     }
