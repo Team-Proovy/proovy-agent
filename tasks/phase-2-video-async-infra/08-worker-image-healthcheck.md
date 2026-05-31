@@ -24,7 +24,7 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] PoC §9.2 Dockerfile 참조 (TeX/ffmpeg/폰트)
+- [ ] PoC §9.2 Dockerfile 참조 (TeX/ffmpeg/폰트) — **PoC = 외부 repo `manim-video-gen`** (이 repo 아님)
 
 ## 구현 체크리스트
 
