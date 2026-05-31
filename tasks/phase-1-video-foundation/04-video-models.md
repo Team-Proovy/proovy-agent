@@ -40,4 +40,5 @@ sprint: ""
 ## 리스크 / 메모
 
 - SolutionPlan/VideoHints 스키마가 소비처(hint_extractor 1.05·파이프라인 1.06)의 요구와 어긋나지 않게 — 소비 task와 함께 검토
+- `VideoJobRef`는 이 파일이 아니라 `graph/state.py`(1.01) 소관 — state-level ref(설계 §1.4). features/video↔graph 순환의존 회피
 - `visualization_hints`는 SolutionPlan이 아니라 VideoHints 소유 (시각화는 video 소관)

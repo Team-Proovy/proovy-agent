@@ -41,4 +41,4 @@ sprint: ""
 ## 리스크 / 메모
 
 - `visual_scene`(LLM-codegen) / `graph_plot`(expression DSL)은 **Phase C** — 여기선 deterministic만
-- CJK 폰트/MathTex fit 깨짐(tofu)은 frame 회귀(Phase D)로 본격 측정
+- CJK 폰트/MathTex fit 깨짐(tofu)은 frame 회귀(**Phase D** = 운영/품질 회귀, 본 PR 범위 밖 · 설계 §7)로 본격 측정

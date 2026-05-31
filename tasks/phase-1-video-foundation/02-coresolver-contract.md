@@ -45,3 +45,4 @@ sprint: ""
 
 - 마지막 메시지가 프로즈가 아니라 도구 호출로 끝나는 경우 — 프롬프트로 강제, 가드가 잡음
 - 순수 파서 `solver_adapter` / 재-solve fallback 도입 금지 (ADR 0001 Update)
+- `create_agent` = LangGraph 2.0 `langchain.agents.create_agent`(deprecated `create_react_agent` 대체, implementation_plan §3.1) — 기존 수동 루프 `_phase1_verify`를 이걸로 **리팩터**(파라미터만 조정 아님)

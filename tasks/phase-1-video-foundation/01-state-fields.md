@@ -31,7 +31,7 @@ sprint: ""
 
 - [ ] `graph/state.py`에 `explanation_mode: Literal["full","brief"] = "full"` 추가
 - [ ] `hold_id: str | None = None` 추가 (Planner plan 단일 hold row id — ADR 0004)
-- [ ] `VideoJobRef` 모델 + `video_jobs: Annotated[list[VideoJobRef], add_reducer]` 추가
+- [ ] `VideoJobRef` 모델을 **`graph/state.py`에 직접 정의**(features/video import 아님 — state-level ref, 설계 §1.4) + `video_jobs: Annotated[list[VideoJobRef], add_reducer]` 추가
 - [ ] dead `reservation_id` / `credit_reserved` 제거 (ADR 0004로 폐기)
 - [ ] state 직렬화 / checkpoint 라운드트립 단위 테스트
 

@@ -67,5 +67,5 @@ status: accepted
 - `video-generation-design.md` §0 #27, §0.5, §2.2.1, §10.4 정정
 - `CONTEXT.md`의 `verified_values` 정의 삭제, *code execution evidence* 추가
 - CoreSolver 구현에서 결정적 파서·verified_values 분기 제거
-- hint_extractor 구현: trim 미들웨어 부착 *하지 않음*
+- hint_extractor 구현: **1b만** trim 미들웨어 *미부착*(풀텍스트 evidence), **1a는 `trim_tool_messages_strict`**(라우팅용 메타뷰) — 1a/1b 분리는 [ADR 0001 Update 3](./0001-video-input-contract.md)
 - (관련) hint_extractor 2-step 분리는 [ADR 0001 Update](./0001-video-input-contract.md) 참조.

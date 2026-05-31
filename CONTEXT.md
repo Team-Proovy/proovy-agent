@@ -11,7 +11,7 @@ CoreSolver가 solve마다 코드 검증을 마친 풀이를 단계·수식·최�
 _Avoid_: 단일 state 필드로 오해(멀티턴 다중 문제에 안 맞음 — ADR 0001 Update), SolutionPlan (video의 구조화 형태), explain (학생용 전체 설명)
 
 **code execution evidence**:
-CoreSolver의 `code_execute` 도구 호출에서 LangGraph 표준대로 messages에 자동 적재되는 `code`(`AIMessage.tool_calls.args.code`)와 `stdout`(`ToolMessage.content`). hint_extractor Step 1이 *trim 미들웨어 부착 없이* 풀텍스트로 LLM에 전달해 verified_solution(프로즈) 옆에 *코드와 실제 출력*을 함께 보임 → 환각이 일어나려면 두 곳에 동시에 같은 왜곡이 필요해 빈도가 낮음. anchor(하드 동치 게이트)가 아니라 *증거 제공*. ADR 0006 (supersedes ADR 0005 `verified_values`).
+CoreSolver의 `code_execute` 도구 호출에서 LangGraph 표준대로 messages에 자동 적재되는 `code`(`AIMessage.tool_calls.args.code`)와 `stdout`(`ToolMessage.content`). hint_extractor Stage 1b가 *trim 미들웨어 부착 없이* 풀텍스트로 LLM에 전달해 verified_solution(프로즈) 옆에 *코드와 실제 출력*을 함께 보임 → 환각이 일어나려면 두 곳에 동시에 같은 왜곡이 필요해 빈도가 낮음. anchor(하드 동치 게이트)가 아니라 *증거 제공*. ADR 0006 (supersedes ADR 0005 `verified_values`).
 _Avoid_: verified_values (ADR 0005 폐기 — 답 형태 다양성에 안 맞음), consistency(narration↔화면 일치 — correctness 아님), anchor(강제 게이트는 폐기)
 
 **SolutionPlan**:

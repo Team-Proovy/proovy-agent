@@ -40,4 +40,5 @@ sprint: ""
 ## 리스크 / 메모
 
 - allowlist가 좁아 정상 manim 패턴을 거부할 수 있음 — 케이스 수집해 화이트리스트 보강
+- **`sympy`는 의도적 제외**: graph_plot DSL의 sympy는 워커(트러스트)에서 도므로 allowlist 무관(#3.02), visual_scene(untrusted)엔 `sympify`/`parse_expr` eval성 위험 → 기본 제외, 수요 입증 시 안전 subset만 검토
 - AST는 자유 영역(`visual_scene`)에만 적용. deterministic 템플릿/`graph_plot` DSL은 대상 아님

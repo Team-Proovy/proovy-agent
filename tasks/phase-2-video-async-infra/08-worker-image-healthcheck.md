@@ -28,7 +28,7 @@ sprint: ""
 
 ## 구현 체크리스트
 
-- [ ] 워커 Dockerfile (비루트 + TeX Live + CJK 폰트 + ffmpeg) + CI 빌드/푸시
+- [ ] 워커 Dockerfile (비루트 + **Python deps[manim 포함]** + TeX Live + CJK 폰트 + ffmpeg) + CI 빌드/푸시
 - [ ] Runtime health check (build-time + startup probe — manim/TeX/폰트 존재 확인)
 
 ## Definition of Done
