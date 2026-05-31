@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -225,6 +225,163 @@ class VideoJobInput(_VideoBaseModel):
     @classmethod
     def problem_text_not_empty(cls, value: str) -> str:
         return _strip_required(value, "problem_text")
+
+
+class VideoPipelineJob(_VideoBaseModel):
+    """Single invocation contract shared by inline and worker video execution."""
+
+    job_id: str
+    input_snapshot: VideoJobInput
+    attempt_id: str | None = None
+
+    @field_validator("job_id")
+    @classmethod
+    def job_id_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "job_id")
+
+    @field_validator("attempt_id")
+    @classmethod
+    def attempt_id_blank_to_none(cls, value: str | None) -> str | None:
+        return _strip_optional(value)
+
+
+class ScriptSegment(_VideoBaseModel):
+    """Video script segment produced after SolutionPlan validation."""
+
+    segment_id: str
+    order: int = Field(..., ge=1)
+    visual_type: str
+    narration: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    source_step_number: int | None = Field(default=None, ge=1)
+
+    @field_validator("segment_id")
+    @classmethod
+    def segment_id_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "segment_id")
+
+    @field_validator("visual_type")
+    @classmethod
+    def visual_type_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "visual_type")
+
+    @field_validator("narration")
+    @classmethod
+    def narration_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "narration")
+
+
+class VideoScript(_VideoBaseModel):
+    """Deterministic script contract consumed by TTS and render stages."""
+
+    title: str
+    segments: list[ScriptSegment]
+    final_answer: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "title")
+
+    @field_validator("segments")
+    @classmethod
+    def segments_not_empty(cls, value: list[ScriptSegment]) -> list[ScriptSegment]:
+        if not value:
+            raise ValueError("segments must contain at least one item")
+        return value
+
+    @field_validator("final_answer")
+    @classmethod
+    def script_final_answer_blank_to_none(cls, value: str | None) -> str | None:
+        return _strip_optional(value)
+
+    @model_validator(mode="after")
+    def validate_segment_order(self) -> VideoScript:
+        """Require ordered 1-based segment order values for stable stage boundaries."""
+        orders = [segment.order for segment in self.segments]
+        expected = list(range(1, len(self.segments) + 1))
+        if orders != expected:
+            raise ValueError("segment order values must be consecutive starting at 1")
+        return self
+
+
+class SegmentTTSResult(_VideoBaseModel):
+    """TTS stage output for a single script segment."""
+
+    segment_id: str
+    narration: str
+    audio_path: str | None = None
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    word_timestamps: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("segment_id")
+    @classmethod
+    def tts_segment_id_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "segment_id")
+
+    @field_validator("narration")
+    @classmethod
+    def tts_narration_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "narration")
+
+    @field_validator("audio_path")
+    @classmethod
+    def audio_path_blank_to_none(cls, value: str | None) -> str | None:
+        return _strip_optional(value)
+
+
+class RenderedSegment(_VideoBaseModel):
+    """Render stage output for a single script segment."""
+
+    segment_id: str
+    visual_type: str
+    video_path: str | None = None
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("segment_id")
+    @classmethod
+    def rendered_segment_id_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "segment_id")
+
+    @field_validator("visual_type")
+    @classmethod
+    def rendered_visual_type_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "visual_type")
+
+    @field_validator("video_path")
+    @classmethod
+    def video_path_blank_to_none(cls, value: str | None) -> str | None:
+        return _strip_optional(value)
+
+
+class FinalVideoArtifact(_VideoBaseModel):
+    """Compose stage output without hiding unknown duration behind fallbacks."""
+
+    output_path: str
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    rendered_segment_count: int = Field(..., ge=0)
+
+    @field_validator("output_path")
+    @classmethod
+    def output_path_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "output_path")
+
+
+class VideoPipelineResult(_VideoBaseModel):
+    """Full dry-run-visible result from the staged video pipeline."""
+
+    job_id: str
+    solution_plan: SolutionPlan
+    script: VideoScript
+    tts_results: list[SegmentTTSResult]
+    rendered_segments: list[RenderedSegment]
+    final_video: FinalVideoArtifact
+
+    @field_validator("job_id")
+    @classmethod
+    def result_job_id_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "job_id")
 
 
 class UserDiagnostic(_VideoBaseModel):
