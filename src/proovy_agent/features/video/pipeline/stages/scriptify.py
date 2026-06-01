@@ -25,7 +25,7 @@ async def stage_scriptify(
     segments = [
         ScriptSegment(
             segment_id=f"step-{step.step_number}",
-            order=step.step_number,
+            order=index,
             visual_type=ctx.default_visual_type,
             narration=step.explanation,
             params={"latex_expression": step.latex_expression}
@@ -33,7 +33,7 @@ async def stage_scriptify(
             else {},
             source_step_number=step.step_number,
         )
-        for step in plan.steps
+        for index, step in enumerate(plan.steps, start=1)
     ]
     return VideoScript(
         title=plan.title,

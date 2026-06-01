@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,10 @@ async def _run_stage[StageResult](
         await ctx.emit_stage_event(stage, "started")
         result = await action()
         await ctx.emit_stage_event(stage, "completed")
+    except asyncio.CancelledError:
+        with suppress(Exception):
+            await ctx.emit_stage_event(stage, "failed")
+        raise
     except Exception:
         with suppress(Exception):
             await ctx.emit_stage_event(stage, "failed")

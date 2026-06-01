@@ -84,7 +84,11 @@ class InvalidSolutionPlanError(PermanentFailure):
 
 
 class InvalidStageOutputError(PermanentFailure):
-    """A pipeline stage produced output that violates the next stage contract."""
+    """A pipeline stage produced output that violates the next stage contract.
+
+    The failing stage should be passed at the raise site because this error is
+    shared by multiple stage boundaries.
+    """
 
     user_error_code = UserErrorCode.UNKNOWN
 

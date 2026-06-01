@@ -1,5 +1,7 @@
 """Video pipeline skeleton tests."""
 
+import asyncio
+
 from pydantic import ValidationError
 import pytest
 
@@ -22,8 +24,12 @@ from proovy_agent.features.video.models import (
     VideoPipelineResult,
     VideoScript,
 )
-from proovy_agent.features.video.pipeline import StageContext, StageEvent, run_job
-from proovy_agent.features.video.pipeline.stages import stage_render, stage_solve
+from proovy_agent.features.video.pipeline import StageContext, StageEvent, orchestrator, run_job
+from proovy_agent.features.video.pipeline.stages import (
+    stage_render,
+    stage_scriptify,
+    stage_solve,
+)
 from proovy_agent.features.video.visual_types import VisualTypeRegistry
 
 
@@ -134,6 +140,28 @@ async def test_progress_handler_failure_marks_stage_failed() -> None:
     ]
 
 
+async def test_external_task_cancellation_marks_running_stage_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def cancel_tts(*args: object, **kwargs: object) -> list[SegmentTTSResult]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(orchestrator, "stage_tts", cancel_tts)
+    ctx = StageContext()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_job(_job(_sample_plan()), ctx=ctx)
+
+    assert [(event.stage, event.status) for event in ctx.stage_events] == [
+        (StageName.SOLVE, "started"),
+        (StageName.SOLVE, "completed"),
+        (StageName.SCRIPTIFY, "started"),
+        (StageName.SCRIPTIFY, "completed"),
+        (StageName.TTS, "started"),
+        (StageName.TTS, "failed"),
+    ]
+
+
 async def test_stage_solve_validates_injected_plan_without_re_solve() -> None:
     class ExplodingLLM:
         def __getattribute__(self, name: str) -> object:
@@ -170,6 +198,33 @@ async def test_invalid_solution_plan_validation_error_maps_to_input_failure() ->
         (StageName.SOLVE, "started"),
         (StageName.SOLVE, "failed"),
     ]
+
+
+async def test_stage_scriptify_uses_sequential_order_independent_of_source_step_number() -> None:
+    raw_plan = SolutionPlan.model_construct(
+        title="비연속 원본 단계",
+        steps=[
+            SolutionStep.model_construct(
+                step_number=1,
+                explanation="첫 번째 원본 단계",
+                latex_expression=None,
+            ),
+            SolutionStep.model_construct(
+                step_number=3,
+                explanation="세 번째 원본 단계",
+                latex_expression="x = 5",
+            ),
+        ],
+        final_answer="x = 5",
+    )
+
+    script = await stage_scriptify(raw_plan, job=_raw_job(raw_plan), ctx=StageContext())
+
+    assert [(segment.segment_id, segment.order) for segment in script.segments] == [
+        ("step-1", 1),
+        ("step-3", 2),
+    ]
+    assert [segment.source_step_number for segment in script.segments] == [1, 3]
 
 
 async def test_stage_render_rejects_missing_or_duplicate_tts_segments() -> None:

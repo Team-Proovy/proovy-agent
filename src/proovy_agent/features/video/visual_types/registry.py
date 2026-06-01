@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-RenderFunction = Callable[..., object]
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+
+class RenderFunction(Protocol):
+    """Callable contract for a visual_type renderer."""
+
+    def __call__(self, **kwargs: Any) -> object: ...
 
 
 def _strip_required(value: str, field_name: str) -> str:
