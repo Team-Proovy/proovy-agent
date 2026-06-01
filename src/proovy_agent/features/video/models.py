@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 from enum import StrEnum
 from typing import Literal
 
@@ -39,6 +40,16 @@ class StageName(StrEnum):
     RENDER = "render"
     COMPOSE = "compose"
     ENQUEUE = "enqueue"
+
+
+class VideoJobStatus(StrEnum):
+    """Persisted lifecycle status for an asynchronous video render job."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class UserErrorCode(StrEnum):
@@ -225,6 +236,61 @@ class VideoJobInput(_VideoBaseModel):
     @classmethod
     def problem_text_not_empty(cls, value: str) -> str:
         return _strip_required(value, "problem_text")
+
+
+class VideoJob(_VideoBaseModel):
+    """Persisted async video job record.
+
+    Segment rows and checkpoint/resume fields are intentionally absent for the
+    Phase B MVP. Progress is tracked as a compact job-level dict.
+    """
+
+    id: str
+    user_id: str
+    thread_id: str
+    problem_hash: str
+    input_snapshot: VideoJobInput
+    cloud_tasks_name: str
+    retry_source_job_id: str | None = None
+    status: VideoJobStatus = VideoJobStatus.QUEUED
+    stage: StageName | None = None
+    progress: dict[str, int] = Field(default_factory=dict)
+    lease_holder_instance_id: str | None = None
+    progress_updated_at: datetime | None = None
+    active_attempt_id: str | None = None
+    artifact_object_key: str | None = None
+    error_stage: StageName | None = None
+    user_error_code: UserErrorCode | None = None
+    error_detail: str | None = None
+    cost: dict[str, float] = Field(default_factory=dict)
+    cancel_requested: bool = False
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    @field_validator("id", "user_id", "thread_id", "problem_hash", "cloud_tasks_name")
+    @classmethod
+    def required_text_not_empty(cls, value: str) -> str:
+        return _strip_required(value, "field")
+
+    @field_validator("retry_source_job_id")
+    @classmethod
+    def retry_source_blank_to_none(cls, value: str | None) -> str | None:
+        return _strip_optional(value)
+
+    @field_validator("progress")
+    @classmethod
+    def progress_values_must_be_non_negative(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(progress_value < 0 for progress_value in value.values()):
+            raise ValueError("progress values must be non-negative")
+        return value
+
+    @field_validator("cost")
+    @classmethod
+    def cost_values_must_be_non_negative(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(cost_value < 0 for cost_value in value.values()):
+            raise ValueError("cost values must be non-negative")
+        return value
 
 
 class UserDiagnostic(_VideoBaseModel):
