@@ -1,5 +1,9 @@
 """Async video job persistence and queue contracts."""
 
+from proovy_agent.features.video.jobs.artifacts import (
+    NoopVideoArtifactUrlResolver,
+    VideoArtifactUrlResolver,
+)
 from proovy_agent.features.video.jobs.client import (
     CloudRunVideoJobClient,
     NoopVideoTaskQueue,
@@ -8,7 +12,10 @@ from proovy_agent.features.video.jobs.client import (
     VideoJobEnqueueError,
     VideoTaskQueue,
 )
-from proovy_agent.features.video.jobs.factory import create_video_job_client
+from proovy_agent.features.video.jobs.factory import (
+    create_video_artifact_url_resolver,
+    create_video_job_client,
+)
 from proovy_agent.features.video.jobs.repository import (
     InMemoryVideoJobRepository,
     InvalidRetrySourceError,
@@ -24,9 +31,11 @@ __all__ = [
     "CloudRunVideoJobClient",
     "InMemoryVideoJobRepository",
     "InvalidRetrySourceError",
+    "NoopVideoArtifactUrlResolver",
     "NoopVideoTaskQueue",
     "PostgresVideoJobRepository",
     "RetryAlreadyUsedError",
+    "VideoArtifactUrlResolver",
     "VideoJobClient",
     "VideoJobClientError",
     "VideoJobEnqueueError",
@@ -35,5 +44,6 @@ __all__ = [
     "VideoJobStoreError",
     "VideoTaskQueue",
     "build_user_diagnostic",
+    "create_video_artifact_url_resolver",
     "create_video_job_client",
 ]

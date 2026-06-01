@@ -30,6 +30,9 @@ class VideoTaskQueue(Protocol):
 
     Tests can provide a fake implementation; production can replace this with
     Cloud Tasks without changing API or graph callers.
+
+    Real queue adapters must make enqueue idempotent and only raise after they
+    have reconciled ambiguous backend failures and know that no task exists.
     """
 
     async def enqueue(self, job: VideoJob) -> None:

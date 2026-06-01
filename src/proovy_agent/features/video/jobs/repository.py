@@ -32,6 +32,7 @@ TERMINAL_JOB_STATUSES = {
     VideoJobStatus.CANCELED,
 }
 RETRYABLE_SOURCE_STATUSES = {VideoJobStatus.FAILED, VideoJobStatus.CANCELED}
+RETRY_SOURCE_UNIQUE_CONSTRAINT = "uq_video_jobs_retry_source_job_id"
 
 
 class VideoJobStoreError(Exception):
@@ -64,6 +65,11 @@ def build_problem_hash(input_snapshot: VideoJobInput) -> str:
 def default_cloud_tasks_name(job_id: str) -> str:
     """Return the deterministic Cloud Tasks task id for a video job."""
     return f"video-{job_id}"
+
+
+def _unique_violation_constraint_name(exc: UniqueViolation) -> str | None:
+    """Return the violated unique constraint name when psycopg exposes it."""
+    return getattr(exc.diag, "constraint_name", None)
 
 
 class VideoJobRepository(Protocol):
@@ -179,6 +185,9 @@ class InMemoryVideoJobRepository:
     ) -> VideoJob:
         async with self._lock:
             job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return job
+
             update: dict[str, object] = {"progress_updated_at": now_utc()}
             if stage is not None:
                 update["stage"] = stage
@@ -332,7 +341,12 @@ class PostgresVideoJobRepository:
                     values,
                 )
             except UniqueViolation as exc:
-                raise RetryAlreadyUsedError("retry already exists for source job") from exc
+                if _unique_violation_constraint_name(exc) == RETRY_SOURCE_UNIQUE_CONSTRAINT:
+                    raise RetryAlreadyUsedError("retry already exists for source job") from exc
+                constraint_name = _unique_violation_constraint_name(exc) or "unknown"
+                raise VideoJobStoreError(
+                    f"video job unique constraint violation: {constraint_name}"
+                ) from exc
             row = await cur.fetchone()
             if row is None:
                 raise VideoJobStoreError("video job insert returned no row")
@@ -359,6 +373,8 @@ class PostgresVideoJobRepository:
         existing = await self.get(job_id)
         if existing is None:
             raise VideoJobNotFoundError(job_id)
+        if existing.status in TERMINAL_JOB_STATUSES:
+            return existing
 
         next_stage = stage if stage is not None else existing.stage
         next_progress = dict(progress) if progress is not None else existing.progress
@@ -377,6 +393,7 @@ class PostgresVideoJobRepository:
                     started_at = %(started_at)s,
                     progress_updated_at = %(progress_updated_at)s
                 WHERE id = %(id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
                 RETURNING *
                 """,
                 {
@@ -390,6 +407,9 @@ class PostgresVideoJobRepository:
             )
             row = await cur.fetchone()
             if row is None:
+                refreshed = await self.get(job_id)
+                if refreshed is not None and refreshed.status in TERMINAL_JOB_STATUSES:
+                    return refreshed
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
 

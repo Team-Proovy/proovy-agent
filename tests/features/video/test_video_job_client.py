@@ -118,3 +118,30 @@ async def test_retry_rejects_non_terminal_source() -> None:
             thread_id="thread-1",
             retry_source_job_id=source.id,
         )
+
+
+async def test_terminal_job_ignores_late_progress_write() -> None:
+    """Terminal job은 stale worker progress write로 running 상태로 되돌아가지 않는다."""
+    client, _queue = _build_client()
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    failed = await client.finalize(
+        job.id,
+        status=VideoJobStatus.FAILED,
+        error_stage=StageName.RENDER,
+        user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+    )
+
+    late_update = await client.update_progress(
+        job.id,
+        status=VideoJobStatus.RUNNING,
+        stage=StageName.RENDER,
+        progress={"segments_done": 1, "segments_total": 3},
+    )
+
+    assert late_update == failed
+    assert late_update.status is VideoJobStatus.FAILED
+    assert late_update.progress == {}

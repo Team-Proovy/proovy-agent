@@ -64,7 +64,6 @@ class VideoJobProgressResponse(BaseModel):
     poll_after_seconds: int = Field(default=2, ge=1)
     retry_source_job_id: str | None
     can_user_retry: bool
-    artifact_object_key: str | None
     user_diagnostic: UserDiagnostic | None
     created_at: datetime
     started_at: datetime | None
@@ -86,7 +85,6 @@ class VideoJobProgressResponse(BaseModel):
             progress_updated_at=job.progress_updated_at,
             retry_source_job_id=job.retry_source_job_id,
             can_user_retry=can_user_retry,
-            artifact_object_key=job.artifact_object_key,
             user_diagnostic=user_diagnostic,
             created_at=job.created_at,
             started_at=job.started_at,
