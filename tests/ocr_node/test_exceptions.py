@@ -5,12 +5,15 @@ import pytest
 from proovy_agent.graph.nodes.ocr_node.exceptions import (
     CommandParsingError,
     ConfidenceThresholdError,
+    FileConversionError,
     ImageProcessingError,
+    LanguageDetectionError,
     MathParsingError,
-    OCREngineError,
     OCRError,
     OCRResourceError,
     OCRTimeoutError,
+    QualityThresholdError,
+    VLMProcessingError,
 )
 
 
@@ -59,30 +62,96 @@ class TestImageProcessingError:
         assert error.recovery_suggestion == "Reduce image resolution and try again"
 
 
-class TestOCREngineError:
-    """Test OCR engine error class."""
+class TestVLMProcessingError:
+    """Test VLM processing error class."""
 
     def test_recoverable_error(self):
-        """Test recoverable OCR engine error."""
-        error = OCREngineError("tesseract", "Tesseract process crashed", {"exit_code": 1})
+        """Test recoverable VLM processing error."""
+        error = VLMProcessingError("flash", "모델 처리 중 오류 발생", {"error_code": "RATE_LIMIT"})
 
-        assert "Tesseract process crashed" in str(error)
-        assert "Engine: tesseract" in str(error)
-        assert "Can try fallback engines" in str(error)
-        assert error.engine_name == "tesseract"
+        assert "모델 처리 중 오류 발생" in str(error)
+        assert "모델: flash" in str(error)
+        assert "폴백 모델 사용 가능" in str(error)
+        assert error.model_name == "flash"
         assert error.is_recoverable is True
 
     def test_non_recoverable_error(self):
-        """Test non-recoverable OCR engine error."""
-        error = OCREngineError(
-            "vision_api", "API quota exceeded", {"quota": "daily_limit"}, is_recoverable=False
+        """Test non-recoverable VLM processing error."""
+        error = VLMProcessingError(
+            "sonnet", "API 키가 유효하지 않음", {"api_status": "invalid"}, is_recoverable=False
         )
 
-        assert "API quota exceeded" in str(error)
-        assert "Engine: vision_api" in str(error)
-        assert "No fallback available" in str(error)
-        assert error.engine_name == "vision_api"
+        assert "API 키가 유효하지 않음" in str(error)
+        assert "모델: sonnet" in str(error)
+        assert "폴백 불가능" in str(error)
+        assert error.model_name == "sonnet"
         assert error.is_recoverable is False
+
+
+class TestFileConversionError:
+    """Test file conversion error class."""
+
+    def test_default_message(self):
+        """Test file conversion error with default message."""
+        error = FileConversionError("pdf")
+
+        error_str = str(error)
+        assert "pdf 파일 변환에 실패했습니다" in error_str
+        assert error.file_type == "pdf"
+
+    def test_custom_message(self):
+        """Test file conversion error with custom message."""
+        error = FileConversionError(
+            "docx", "지원하지 않는 문서 형식입니다", {"version": "2003"}
+        )
+
+        error_str = str(error)
+        assert "지원하지 않는 문서 형식입니다" in error_str
+        assert error.file_type == "docx"
+
+
+class TestQualityThresholdError:
+    """Test quality threshold error class."""
+
+    def test_default_message(self):
+        """Test quality threshold error with default message."""
+        error = QualityThresholdError(0.8, 0.6)
+
+        error_str = str(error)
+        assert "OCR 품질이 기준에 미달합니다" in error_str
+        assert "기준: 0.8" in error_str
+        assert "실제: 0.6" in error_str
+        assert error.threshold == 0.8
+        assert error.actual_score == 0.6
+
+    def test_custom_message(self):
+        """Test quality threshold error with custom message."""
+        error = QualityThresholdError(
+            0.9, 0.7, "이미지 품질이 너무 낮습니다", {"blur_detected": True}
+        )
+
+        error_str = str(error)
+        assert "이미지 품질이 너무 낮습니다" in error_str
+        assert "기준: 0.9" in error_str
+        assert "실제: 0.7" in error_str
+
+
+class TestLanguageDetectionError:
+    """Test language detection error class."""
+
+    def test_default_error(self):
+        """Test default language detection error."""
+        error = LanguageDetectionError()
+
+        assert "언어 감지에 실패했습니다" in str(error)
+
+    def test_custom_error(self):
+        """Test custom language detection error."""
+        error = LanguageDetectionError(
+            "혼합 언어 텍스트로 인한 감지 실패", {"languages_detected": ["ko", "en", "zh"]}
+        )
+
+        assert "혼합 언어 텍스트로 인한 감지 실패" in str(error)
 
 
 class TestMathParsingError:
@@ -162,17 +231,18 @@ class TestOCRTimeoutError:
         error = OCRTimeoutError(30.0)
 
         error_str = str(error)
-        assert "OCR processing timed out after 30.0 seconds" in error_str
+        assert "OCR 처리가 30.0초 후 시간 초과되었습니다" in error_str
+        assert "이미지 복잡도를 줄이거나" in error_str
         assert error.timeout_seconds == 30.0
 
     def test_custom_message(self):
         """Test timeout error with custom message."""
         error = OCRTimeoutError(
-            60.0, "Large image processing exceeded time limit", {"image_size": "50MB"}
+            60.0, "대용량 이미지 처리 시간 초과", {"image_size": "50MB"}
         )
 
         error_str = str(error)
-        assert "Large image processing exceeded time limit" in error_str
+        assert "대용량 이미지 처리 시간 초과" in error_str
         assert error.timeout_seconds == 60.0
 
 
@@ -181,20 +251,20 @@ class TestOCRResourceError:
 
     def test_default_message(self):
         """Test resource error with default message."""
-        error = OCRResourceError("memory")
+        error = OCRResourceError("메모리")
 
         error_str = str(error)
-        assert "OCR processing failed due to memory constraints" in error_str
-        assert error.resource_type == "memory"
+        assert "메모리 리소스 제약으로 OCR 처리에 실패했습니다" in error_str
+        assert error.resource_type == "메모리"
 
     def test_custom_message(self):
         """Test resource error with custom message."""
         error = OCRResourceError(
-            "GPU", "CUDA out of memory", {"available_memory": "2GB", "required_memory": "4GB"}
+            "GPU", "CUDA 메모리 부족", {"available_memory": "2GB", "required_memory": "4GB"}
         )
 
         error_str = str(error)
-        assert "CUDA out of memory" in error_str
+        assert "CUDA 메모리 부족" in error_str
         assert error.resource_type == "GPU"
 
 
@@ -205,7 +275,10 @@ class TestExceptionInheritance:
         """Test that all OCR exceptions inherit from OCRError."""
         exceptions = [
             ImageProcessingError(),
-            OCREngineError("test"),
+            VLMProcessingError("flash"),
+            FileConversionError("pdf"),
+            QualityThresholdError(0.8, 0.6),
+            LanguageDetectionError(),
             MathParsingError(),
             CommandParsingError(),
             ConfidenceThresholdError(0.8, 0.6),
@@ -222,7 +295,7 @@ class TestExceptionInheritance:
             raise ImageProcessingError("Test error")
 
         with pytest.raises(OCRError):
-            raise OCREngineError("tesseract", "Test error")
+            raise VLMProcessingError("flash", "Test error")
 
         with pytest.raises(OCRError):
-            raise ConfidenceThresholdError(0.8, 0.6)
+            raise QualityThresholdError(0.8, 0.6)

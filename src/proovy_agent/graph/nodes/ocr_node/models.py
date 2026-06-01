@@ -1,97 +1,214 @@
-"""OCR data models and Pydantic schemas."""
+"""OCR 데이터 모델 및 Pydantic 스키마 - VLM 기반."""
 
-from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class OCROptions(BaseModel):
-    """OCR processing options and configuration."""
+    """OCR 처리 옵션 및 설정."""
 
-    engines: list[Literal["tesseract", "vision_api", "paddleocr"]] = Field(
-        default=["tesseract", "vision_api"],
-        description="List of OCR engines to use in order of preference",
+    # VLM 모델 설정
+    primary_model: str = Field(
+        default="flash",
+        description="주 VLM 모델 (flash, sonnet, opus)",
     )
-    language: str = Field(
-        default="kor+eng", description="Language codes for OCR recognition (e.g., 'kor+eng', 'eng')"
+    fallback_model: str = Field(
+        default="sonnet",
+        description="폴백 VLM 모델",
     )
-    math_mode: bool = Field(default=True, description="Enable mathematical expression recognition")
-    confidence_threshold: float = Field(
-        default=0.8,
+    target_language: str = Field(
+        default="auto",
+        description="목표 언어 ('ko', 'en', 'auto')",
+    )
+
+    # 기능 설정
+    enable_math_mode: bool = Field(
+        default=True,
+        description="수학 수식 인식 모드 활성화",
+    )
+    enable_command_parsing: bool = Field(
+        default=True,
+        description="@커맨드 파싱 활성화",
+    )
+
+    # 품질 및 성능 설정
+    quality_threshold: float = Field(
+        default=0.7,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence score for accepting OCR results",
+        description="최소 품질 임계값",
     )
     max_processing_time: float = Field(
-        default=30.0, gt=0, description="Maximum processing time in seconds"
+        default=30.0,
+        gt=0,
+        description="최대 처리 시간 (초)",
     )
 
-    @field_validator("engines")
+    @field_validator("primary_model", "fallback_model")
     @classmethod
-    def validate_engines(cls, v: list[str]) -> list[str]:
-        """Validate that at least one engine is specified."""
-        if not v:
-            raise ValueError("At least one OCR engine must be specified")
+    def validate_model_names(cls, v: str) -> str:
+        """VLM 모델명 유효성 검증."""
+        valid_models = {"flash", "sonnet", "opus"}
+        if v not in valid_models:
+            raise ValueError(f"지원하지 않는 모델: {v}. 지원 모델: {valid_models}")
         return v
 
 
-class OCREngineResult(BaseModel):
-    """Result from a single OCR engine."""
+class VLMResult(BaseModel):
+    """VLM 처리 결과."""
 
-    engine_name: str = Field(description="Name of the OCR engine that produced this result")
-    raw_text: str = Field(description="Raw text extracted by the engine")
-    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0")
-    processing_time: float = Field(ge=0.0, description="Processing time in seconds")
-    bbox_data: list[dict] = Field(
-        default_factory=list, description="Bounding box data for detected text regions"
+    model_name: str = Field(description="사용된 VLM 모델명")
+    raw_text: str = Field(description="추출된 원본 텍스트")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="신뢰도 점수",
     )
-    metadata: dict = Field(default_factory=dict, description="Additional engine-specific metadata")
+    processing_time: float = Field(
+        ge=0.0,
+        description="처리 시간 (초)",
+    )
+    token_usage: dict[str, int] = Field(
+        default_factory=dict,
+        description="토큰 사용량 정보",
+    )
+
+
+class ProcessedImage(BaseModel):
+    """전처리된 이미지 정보."""
+
+    image_data: bytes = Field(description="처리된 이미지 데이터")
+    format: str = Field(description="이미지 형식")
+    width: int = Field(ge=1, description="이미지 너비")
+    height: int = Field(ge=1, description="이미지 높이")
+    dpi: int = Field(ge=1, description="이미지 DPI")
+    preprocessing_applied: list[str] = Field(
+        default_factory=list,
+        description="적용된 전처리 단계들",
+    )
+
+
+class CommandTag(BaseModel):
+    """파싱된 @커맨드 정보."""
+
+    command: str = Field(description="정규화된 커맨드명")
+    original_text: str = Field(description="원본 텍스트")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="파싱 신뢰도",
+    )
+    position: int = Field(
+        ge=0,
+        description="텍스트 내 위치",
+    )
+
+
+class MathExpression(BaseModel):
+    """수학 수식 정보."""
+
+    latex: str = Field(description="LaTeX 형식 수식")
+    original: str = Field(description="원본 텍스트")
+    position: tuple[int, int] = Field(description="텍스트 내 시작-끝 위치")
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, v: tuple[int, int]) -> tuple[int, int]:
+        """위치 정보 유효성 검증."""
+        start, end = v
+        if start < 0 or end < 0 or start > end:
+            raise ValueError("잘못된 위치 범위입니다")
+        return v
+
+
+class PageResult(BaseModel):
+    """PDF 페이지별 OCR 결과."""
+
+    page_number: int = Field(ge=1, description="페이지 번호")
+    text: str = Field(description="추출된 텍스트")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="페이지 신뢰도",
+    )
+    math_expressions: list[MathExpression] = Field(
+        default_factory=list,
+        description="페이지 내 수학 수식들",
+    )
+
+
+class ProcessingMetadata(BaseModel):
+    """OCR 처리 메타데이터."""
+
+    total_processing_time: float = Field(
+        ge=0.0,
+        description="전체 처리 시간 (초)",
+    )
+    model_used: str = Field(description="사용된 주 모델")
+    fallback_used: bool = Field(
+        default=False,
+        description="폴백 모델 사용 여부",
+    )
+    pages_processed: int = Field(
+        ge=1,
+        description="처리된 페이지 수",
+    )
+    quality_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="전체 품질 점수",
+    )
+    language_detected: str = Field(description="감지된 언어")
 
 
 class OCRRequest(BaseModel):
-    """OCR processing request data."""
+    """OCR 처리 요청 데이터."""
 
-    image_data: bytes = Field(description="Binary image data")
-    image_format: Literal["png", "jpg", "jpeg", "pdf"] = Field(
-        description="Format of the input image"
-    )
-    user_id: str = Field(description="User ID for the request")
-    thread_id: str = Field(description="Thread ID for conversation context")
-    processing_options: OCROptions = Field(
-        default_factory=OCROptions, description="OCR processing configuration"
+    raw_input: dict = Field(description="원본 입력 데이터")
+    user_id: str = Field(description="사용자 ID")
+    thread_id: str = Field(description="스레드 ID")
+    options: OCROptions = Field(
+        default_factory=OCROptions,
+        description="OCR 처리 옵션",
     )
 
-    @field_validator("image_data")
+    @field_validator("raw_input")
     @classmethod
-    def validate_image_size(cls, v: bytes) -> bytes:
-        """Validate image size limits."""
-        max_size = 50 * 1024 * 1024  # 50MB limit
-        if len(v) > max_size:
-            raise ValueError(f"Image size {len(v)} bytes exceeds maximum {max_size} bytes")
-        if len(v) == 0:
-            raise ValueError("Image data cannot be empty")
+    def validate_raw_input(cls, v: dict) -> dict:
+        """입력 데이터 유효성 검증."""
+        if not v:
+            raise ValueError("입력 데이터가 비어있습니다")
         return v
 
 
 class OCRResult(BaseModel):
-    """Final OCR processing result."""
+    """최종 OCR 처리 결과."""
 
-    extracted_text: str = Field(description="Final extracted and processed text")
-    confidence: float = Field(ge=0.0, le=1.0, description="Overall confidence score")
-    tags: list[str] = Field(default_factory=list, description="Parsed command tags and intentions")
-    math_expressions: list[str] = Field(
-        default_factory=list, description="Detected mathematical expressions in LaTeX format"
+    extracted_text: str = Field(description="통합된 추출 텍스트")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="전체 신뢰도",
     )
-    engine_results: list[OCREngineResult] = Field(
-        default_factory=list, description="Results from individual OCR engines"
+    command_tags: list[CommandTag] = Field(
+        default_factory=list,
+        description="파싱된 @커맨드들",
     )
-    processing_time: float = Field(ge=0.0, description="Total processing time in seconds")
-    metadata: dict = Field(default_factory=dict, description="Additional processing metadata")
+    math_expressions: list[MathExpression] = Field(
+        default_factory=list,
+        description="수학 수식들",
+    )
+    pages: list[PageResult] | None = Field(
+        default=None,
+        description="PDF 페이지별 결과",
+    )
+    language: str = Field(description="감지된 주 언어")
+    processing_metadata: ProcessingMetadata = Field(description="처리 메타데이터")
 
     @field_validator("extracted_text")
     @classmethod
     def validate_text_content(cls, v: str) -> str:
-        """Validate extracted text is not empty."""
+        """추출된 텍스트 유효성 검증."""
         if not v.strip():
-            raise ValueError("Extracted text cannot be empty")
+            raise ValueError("추출된 텍스트가 비어있습니다")
         return v

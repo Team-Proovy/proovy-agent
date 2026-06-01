@@ -34,26 +34,73 @@ class ImageProcessingError(OCRError):
         return f"{base_msg}. Suggestion: {self.recovery_suggestion}"
 
 
-class OCREngineError(OCRError):
-    """Raised when a specific OCR engine fails."""
+class VLMProcessingError(OCRError):
+    """VLM 처리 실패 예외."""
 
     def __init__(
         self,
-        engine_name: str,
-        message: str = "OCR engine processing failed",
+        model_name: str,
+        message: str = "VLM 처리에 실패했습니다",
         details: dict | None = None,
         is_recoverable: bool = True,
     ) -> None:
         super().__init__(message, details)
-        self.engine_name = engine_name
+        self.model_name = model_name
         self.is_recoverable = is_recoverable
 
     def __str__(self) -> str:
         base_msg = super().__str__()
         recovery_msg = (
-            "Can try fallback engines" if self.is_recoverable else "No fallback available"
+            "폴백 모델 사용 가능" if self.is_recoverable else "폴백 불가능"
         )
-        return f"{base_msg} (Engine: {self.engine_name}, {recovery_msg})"
+        return f"{base_msg} (모델: {self.model_name}, {recovery_msg})"
+
+
+class FileConversionError(OCRError):
+    """파일 변환 실패 예외."""
+
+    def __init__(
+        self,
+        file_type: str,
+        message: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        if message is None:
+            message = f"{file_type} 파일 변환에 실패했습니다"
+        super().__init__(message, details)
+        self.file_type = file_type
+
+
+class QualityThresholdError(OCRError):
+    """품질 기준 미달 예외."""
+
+    def __init__(
+        self,
+        threshold: float,
+        actual_score: float,
+        message: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        if message is None:
+            message = "OCR 품질이 기준에 미달합니다"
+        super().__init__(message, details)
+        self.threshold = threshold
+        self.actual_score = actual_score
+
+    def __str__(self) -> str:
+        base_msg = super().__str__()
+        return f"{base_msg} (기준: {self.threshold}, 실제: {self.actual_score})"
+
+
+class LanguageDetectionError(OCRError):
+    """언어 감지 실패 예외."""
+
+    def __init__(
+        self,
+        message: str = "언어 감지에 실패했습니다",
+        details: dict | None = None,
+    ) -> None:
+        super().__init__(message, details)
 
 
 class MathParsingError(OCRError):
@@ -116,24 +163,34 @@ class ConfidenceThresholdError(OCRError):
 
 
 class OCRTimeoutError(OCRError):
-    """Raised when OCR processing exceeds time limit."""
+    """OCR 처리 시간 초과 예외."""
 
     def __init__(
-        self, timeout_seconds: float, message: str | None = None, details: dict | None = None
+        self,
+        timeout_seconds: float,
+        message: str | None = None,
+        details: dict | None = None,
     ) -> None:
         if message is None:
-            message = f"OCR processing timed out after {timeout_seconds} seconds"
+            message = f"OCR 처리가 {timeout_seconds}초 후 시간 초과되었습니다"
         super().__init__(message, details)
         self.timeout_seconds = timeout_seconds
 
+    def __str__(self) -> str:
+        base_msg = super().__str__()
+        return f"{base_msg}. 제안: 이미지 복잡도를 줄이거나 시간 제한을 늘려보세요"
+
 
 class OCRResourceError(OCRError):
-    """Raised when OCR processing fails due to resource constraints."""
+    """리소스 제약으로 인한 OCR 처리 실패 예외."""
 
     def __init__(
-        self, resource_type: str, message: str | None = None, details: dict | None = None
+        self,
+        resource_type: str,
+        message: str | None = None,
+        details: dict | None = None,
     ) -> None:
         if message is None:
-            message = f"OCR processing failed due to {resource_type} constraints"
+            message = f"{resource_type} 리소스 제약으로 OCR 처리에 실패했습니다"
         super().__init__(message, details)
         self.resource_type = resource_type

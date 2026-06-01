@@ -1,35 +1,49 @@
-"""OCR node for image text extraction and preprocessing."""
+"""OCR 노드 - VLM 기반 이미지 텍스트 추출 및 @커맨드 파싱."""
 
 from .exceptions import (
     CommandParsingError,
     ConfidenceThresholdError,
+    FileConversionError,
     ImageProcessingError,
+    LanguageDetectionError,
     MathParsingError,
-    OCREngineError,
     OCRError,
     OCRResourceError,
     OCRTimeoutError,
+    QualityThresholdError,
+    VLMProcessingError,
 )
 from .models import (
-    OCREngineResult,
+    CommandTag,
+    MathExpression,
     OCROptions,
     OCRRequest,
     OCRResult,
+    PageResult,
+    ProcessedImage,
+    ProcessingMetadata,
+    VLMResult,
 )
 
 __all__ = [
     "CommandParsingError",
+    "CommandTag",
     "ConfidenceThresholdError",
+    "FileConversionError",
     "ImageProcessingError",
+    "LanguageDetectionError",
+    "MathExpression",
     "MathParsingError",
-    "OCREngineError",
-    # Models
-    "OCREngineResult",
-    # Exceptions
     "OCRError",
     "OCROptions",
     "OCRRequest",
     "OCRResourceError",
     "OCRResult",
     "OCRTimeoutError",
+    "PageResult",
+    "ProcessedImage",
+    "ProcessingMetadata",
+    "QualityThresholdError",
+    "VLMProcessingError",
+    "VLMResult",
 ]
