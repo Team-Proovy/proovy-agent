@@ -9,6 +9,7 @@ from proovy_agent.features.video.hint_extractor import (
     build_target_slice,
     extract_solution_plan,
     extract_video_hints,
+    extract_video_inputs,
     select_target_turn,
 )
 from proovy_agent.features.video.models import (
@@ -220,3 +221,51 @@ async def test_extract_video_hints_consumes_problem_and_plan_not_messages() -> N
     assert hints.emphasis_targets == ["x = 5"]
     assert fake_llm.schema is VideoHints
     assert len(fake_llm.structured.calls[0]) == 2
+
+
+async def test_extract_video_inputs_uses_target_turn_problem_as_canonical_text() -> None:
+    canonical_problem = "1번: x - 3 = 2를 풀어라."
+    wrong_selection_problem = "2번: 다른 문제"
+    messages = [
+        *_solve_turn(
+            problem=canonical_problem,
+            code="print(5)",
+            stdout="stdout:\n5\n",
+            verified="x=5입니다.",
+            tool_call_id="tc-1",
+        ),
+        HumanMessage(content="아까 1번 문제 영상으로 만들어줘."),
+    ]
+    plan = SolutionPlan(
+        title="일차방정식",
+        steps=[SolutionStep(step_number=1, explanation="x=5를 확인합니다.")],
+        final_answer="x=5",
+    )
+    target_llm = _FakeLLM(
+        lambda _messages: TargetSelection(
+            target_turn_idx=0,
+            problem_text=wrong_selection_problem,
+            target_confidence=0.92,
+            reasoning="1번을 지칭했다.",
+        )
+    )
+    plan_llm = _FakeLLM(lambda _messages: plan)
+
+    def _video_hints_factory(messages: list[AnyMessage]) -> VideoHints:
+        combined = "\n".join(str(message.content) for message in messages)
+        assert canonical_problem in combined
+        assert wrong_selection_problem not in combined
+        return VideoHints(
+            visualization_hints=["x=5 강조"],
+            director_policy=DirectorBriefPolicy(brief_template="objects / layout / animation"),
+        )
+
+    result = await extract_video_inputs(
+        messages,
+        target_llm=target_llm,
+        plan_llm=plan_llm,
+        video_hints_llm=_FakeLLM(_video_hints_factory),
+    )
+
+    assert result.problem_text == canonical_problem
+    assert result.target_selection.problem_text == wrong_selection_problem

@@ -157,11 +157,10 @@ def _format_turn_catalog(turns: list[_SolutionTurn]) -> str:
     return "\n".join(lines)
 
 
-def build_target_slice(
+def _target_turn(
     messages: list[AnyMessage],
     selection: TargetSelection,
-) -> list[AnyMessage]:
-    """Build the full-evidence target slice for Stage 1b."""
+) -> _SolutionTurn:
     turns = _solution_turns(messages)
     if selection.target_turn_idx is None:
         raise InvalidSolutionPlanError(
@@ -177,8 +176,15 @@ def build_target_slice(
                 "target_confidence": selection.target_confidence,
             },
         )
+    return turns[selection.target_turn_idx]
 
-    turn = turns[selection.target_turn_idx]
+
+def build_target_slice(
+    messages: list[AnyMessage],
+    selection: TargetSelection,
+) -> list[AnyMessage]:
+    """Build the full-evidence target slice for Stage 1b."""
+    turn = _target_turn(messages, selection)
     target_slice = list(messages[turn.start_idx : turn.end_idx + 1])
 
     request_idx = _latest_human_idx(messages)
@@ -253,14 +259,15 @@ async def extract_video_inputs(
     """Run Stage 1a, Stage 1b, and Step 2 without wiring the video node."""
     selection = await select_target_turn(messages, llm=target_llm)
     target_slice = build_target_slice(messages, selection)
+    problem_text = _message_text(target_slice[0])
     solution_plan = await extract_solution_plan(target_slice, llm=plan_llm)
     video_hints = await extract_video_hints(
-        selection.problem_text,
+        problem_text,
         solution_plan,
         llm=video_hints_llm,
     )
     return HintExtractionResult(
-        problem_text=selection.problem_text,
+        problem_text=problem_text,
         target_selection=selection,
         solution_plan=solution_plan,
         video_hints=video_hints,
