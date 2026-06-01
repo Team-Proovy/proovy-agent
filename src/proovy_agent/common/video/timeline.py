@@ -77,7 +77,12 @@ def build_timeline_from_word_ts(
     emphasis_targets: list[str],
     visual_targets: dict[str, str],
 ) -> list[AnimEvent]:
-    """Build `Indicate` events from word timestamps and emphasis targets."""
+    """Build `Indicate` events from word timestamps and emphasis targets.
+
+    If the same target is spoken more than once, the first occurrence is used.
+    Repeated-emphasis selection needs an explicit script contract before it can
+    choose later occurrences without guessing author intent.
+    """
     _validate_total_duration(total_duration)
     alignment = _align_emphasis_targets(
         total_duration_seconds=total_duration,
@@ -95,7 +100,10 @@ def build_segment_timeline(
     emphasis_targets: list[str],
     visual_targets: dict[str, str],
 ) -> TimelineSyncResult:
-    """Build visual emphasis and subtitle cues from one segment's TTS metadata."""
+    """Build visual emphasis and subtitle cues from one segment's TTS metadata.
+
+    Repeated emphasis targets are aligned to their first spoken occurrence.
+    """
     resolved_duration = _resolve_total_duration(total_duration, word_timestamps)
     subtitle_cues = tuple(build_word_synced_subtitle_cues(word_timestamps))
 

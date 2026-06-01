@@ -57,6 +57,26 @@ def test_timeline_matches_split_korean_emphasis_target() -> None:
     assert timeline.events[0].source_text == "빨간 색"
 
 
+def test_timeline_uses_first_spoken_occurrence_for_repeated_target() -> None:
+    """Repeated emphasis targets use the first provider timestamp by policy."""
+    timestamps = [
+        WordTimestamp(word="x=3입니다.", start=0.2, end=0.6),
+        WordTimestamp(word="다시", start=0.9, end=1.1),
+        WordTimestamp(word="x=3입니다.", start=1.4, end=1.8),
+    ]
+
+    events = build_timeline_from_word_ts(
+        total_duration=2.2,
+        word_timestamps=timestamps,
+        emphasis_targets=["x=3"],
+        visual_targets={"x=3": "answer-mobject"},
+    )
+
+    assert len(events) == 1
+    assert events[0].at_seconds == pytest.approx(0.2)
+    assert events[0].source_text == "x=3입니다."
+
+
 def test_word_synced_subtitles_consume_provider_word_timestamps() -> None:
     """Subtitle cues preserve the TTS word timestamp contract without guessing duration."""
     timestamps = [

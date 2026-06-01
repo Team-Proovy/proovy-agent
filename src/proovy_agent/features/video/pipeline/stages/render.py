@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import TYPE_CHECKING
+import unicodedata
 
 from proovy_agent.common.video.timeline import build_segment_timeline
 from proovy_agent.features.video.exceptions import InvalidStageOutputError
@@ -28,7 +29,7 @@ async def stage_render(
     ctx: StageContext,
 ) -> list[RenderedSegment]:
     """Return render placeholders and keep unknown duration explicit."""
-    _ = (job, ctx)
+    _ = ctx
     expected_segment_ids = [segment.segment_id for segment in script.segments]
     tts_segment_ids = [result.segment_id for result in tts_results]
     if tts_segment_ids != expected_segment_ids:
@@ -42,6 +43,12 @@ async def stage_render(
             },
         )
     tts_by_segment_id = {result.segment_id: result for result in tts_results}
+    job_emphasis_targets = (
+        job.input_snapshot.video_hints.emphasis_targets
+        if job.input_snapshot.video_hints is not None
+        else []
+    )
+    allow_job_emphasis_fallback = len(script.segments) == 1
     return [
         RenderedSegment(
             segment_id=segment.segment_id,
@@ -53,10 +60,10 @@ async def stage_render(
                 "timeline": _build_timeline_diagnostics(
                     segment_params=segment.params,
                     tts_result=tts_by_segment_id[segment.segment_id],
-                    emphasis_targets=(
-                        job.input_snapshot.video_hints.emphasis_targets
-                        if job.input_snapshot.video_hints is not None
-                        else []
+                    emphasis_targets=_emphasis_targets_from_params(
+                        segment.params,
+                        job_emphasis_targets=job_emphasis_targets,
+                        allow_job_fallback=allow_job_emphasis_fallback,
                     ),
                 ),
             },
@@ -78,7 +85,11 @@ def _build_timeline_diagnostics(
         visual_targets=_visual_targets_from_params(segment_params, emphasis_targets),
     )
     return {
-        "source": "word_timestamps" if tts_result.word_timestamps else "fallback",
+        "source": _timeline_source(
+            has_word_timestamps=bool(tts_result.word_timestamps),
+            has_events=bool(timeline.events),
+            used_fallback=timeline.used_fallback,
+        ),
         "total_duration_seconds": timeline.total_duration_seconds,
         "events": [asdict(event) for event in timeline.events],
         "subtitle_cues": [asdict(cue) for cue in timeline.subtitle_cues],
@@ -88,10 +99,24 @@ def _build_timeline_diagnostics(
     }
 
 
+def _emphasis_targets_from_params(
+    segment_params: Mapping[str, object],
+    *,
+    job_emphasis_targets: list[str],
+    allow_job_fallback: bool,
+) -> list[str]:
+    if "emphasis_targets" in segment_params:
+        return _string_list_from_param(segment_params.get("emphasis_targets"))
+    if allow_job_fallback:
+        return _strip_nonempty(job_emphasis_targets)
+    return []
+
+
 def _visual_targets_from_params(
     segment_params: Mapping[str, object],
     emphasis_targets: list[str],
 ) -> dict[str, str]:
+    visual_targets: dict[str, str] = {}
     raw_visual_targets = segment_params.get("visual_targets")
     if isinstance(raw_visual_targets, Mapping):
         visual_targets = {
@@ -99,7 +124,45 @@ def _visual_targets_from_params(
             for target, target_id in raw_visual_targets.items()
             if str(target).strip() and str(target_id).strip()
         }
-        if visual_targets:
-            return visual_targets
 
-    return {target.strip(): target.strip() for target in emphasis_targets if target.strip()}
+    normalized_visual_target_keys = {
+        _normalize_visual_target_key(target) for target in visual_targets
+    }
+    for target in _strip_nonempty(emphasis_targets):
+        normalized_target = _normalize_visual_target_key(target)
+        if normalized_target not in normalized_visual_target_keys:
+            visual_targets[target] = target
+            normalized_visual_target_keys.add(normalized_target)
+    return visual_targets
+
+
+def _timeline_source(
+    *,
+    has_word_timestamps: bool,
+    has_events: bool,
+    used_fallback: bool,
+) -> str:
+    if used_fallback:
+        return "fallback"
+    if has_events:
+        return "emphasis_synced"
+    if has_word_timestamps:
+        return "word_timestamps"
+    return "fallback"
+
+
+def _string_list_from_param(value: object) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    return _strip_nonempty([str(item) for item in value])
+
+
+def _strip_nonempty(values: list[str]) -> list[str]:
+    return [value.strip() for value in values if value.strip()]
+
+
+def _normalize_visual_target_key(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = normalized.replace("\u2212", "-")
+    math_symbols = frozenset("=+-*/^<>")
+    return "".join(char for char in normalized if char.isalnum() or char in math_symbols)
