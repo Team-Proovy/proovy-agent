@@ -2,6 +2,7 @@
 
 from proovy_agent.features.video.exceptions import (
     InvalidSolutionPlanError,
+    InvalidStageOutputError,
     PermanentFailure,
     PipelineError,
     TransientFailure,
@@ -10,6 +11,10 @@ from proovy_agent.features.video.exceptions import (
 from proovy_agent.features.video.models import (
     DirectorBriefPolicy,
     FailureKind,
+    FinalVideoArtifact,
+    RenderedSegment,
+    ScriptSegment,
+    SegmentTTSResult,
     SolutionPlan,
     SolutionStep,
     StageName,
@@ -21,15 +26,23 @@ from proovy_agent.features.video.models import (
     VideoJobInput,
     VideoJobStatus,
     VideoOptions,
+    VideoPipelineJob,
+    VideoPipelineResult,
+    VideoScript,
     user_error_message,
 )
 
 __all__ = [
     "DirectorBriefPolicy",
     "FailureKind",
+    "FinalVideoArtifact",
     "InvalidSolutionPlanError",
+    "InvalidStageOutputError",
     "PermanentFailure",
     "PipelineError",
+    "RenderedSegment",
+    "ScriptSegment",
+    "SegmentTTSResult",
     "SolutionPlan",
     "SolutionStep",
     "StageName",
@@ -42,6 +55,9 @@ __all__ = [
     "VideoJobInput",
     "VideoJobStatus",
     "VideoOptions",
+    "VideoPipelineJob",
+    "VideoPipelineResult",
+    "VideoScript",
     "classify_failure",
     "user_error_message",
 ]
