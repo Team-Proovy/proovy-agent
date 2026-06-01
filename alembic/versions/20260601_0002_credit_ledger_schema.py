@@ -1,8 +1,8 @@
 """create unified credit ledger tables
 
-Revision ID: 20260531_0001
-Revises:
-Create Date: 2026-05-31
+Revision ID: 20260601_0002
+Revises: 20260531_0001
+Create Date: 2026-06-01
 """
 
 from collections.abc import Sequence
@@ -11,8 +11,8 @@ from alembic import op
 
 from proovy_agent.features.credits.schema import CREDIT_LEDGER_SCHEMA_SQL
 
-revision: str = "20260531_0001"
-down_revision: str | None = None
+revision: str = "20260601_0002"
+down_revision: str | None = "20260531_0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
