@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 import logging
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from langchain_core.messages import HumanMessage
 from sse_starlette.sse import EventSourceResponse
 
@@ -14,6 +14,7 @@ from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.emitter import SSEEmitter
 from proovy_agent.common.sse.events import DonePayload, ErrorPayload
 from proovy_agent.graph.builder import get_graph
+from proovy_agent.graph.runtime import current_credit_ledger_client, current_video_job_client
 from proovy_agent.graph.state import ProovyState
 
 router = APIRouter()
@@ -34,13 +35,17 @@ def _build_initial_state(request: SolveRequest) -> ProovyState:
 
 
 @router.post("/solve", response_class=EventSourceResponse)
-async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
+async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
     state = _build_initial_state(request)
     emitter = SSEEmitter(thread_id=state.thread_id)
+    credit_ledger_client = getattr(http_request.app.state, "credit_ledger_client", None)
+    video_job_client = getattr(http_request.app.state, "video_job_client", None)
 
     async def _run() -> None:
-        token = current_emitter.set(emitter)
+        emitter_token = current_emitter.set(emitter)
+        credit_token = current_credit_ledger_client.set(credit_ledger_client)
+        video_token = current_video_job_client.set(video_job_client)
         try:
             # 체크포인트 키를 user_id로 네임스페이스해 타 사용자 thread_id 접근을 차단.
             # user_id 인증 자체는 상위 게이트웨이/BFF 책임 (여기선 신뢰 가정).
@@ -60,7 +65,9 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
                 await emitter.emit(ErrorPayload(message="풀이 중 오류가 발생했습니다."))
         finally:
             await emitter.close()
-            current_emitter.reset(token)
+            current_video_job_client.reset(video_token)
+            current_credit_ledger_client.reset(credit_token)
+            current_emitter.reset(emitter_token)
 
     # 그래프 태스크는 SSE 연결과 독립적으로 실행 — disconnect 시에도 풀이가 완료됨
     task: asyncio.Task[None] = asyncio.create_task(_run())
