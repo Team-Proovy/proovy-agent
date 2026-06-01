@@ -53,3 +53,16 @@ def test_settings_reads_inworld_tts_aliases(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.inworld_tts_api_key == "legacy-key"
     assert settings.video_tts_model == "inworld-tts-custom"
     assert settings.video_tts_voice == "Mihyun"
+
+
+def test_settings_reads_video_hint_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings exposes the three hint extractor model aliases."""
+    monkeypatch.setenv("VIDEO_HINT_TARGET_MODEL", "flash-custom")
+    monkeypatch.setenv("VIDEO_HINT_PLAN_MODEL", "sonnet-custom")
+    monkeypatch.setenv("VIDEO_HINT_VIDEOHINTS_MODEL", "flash-hints")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.video_hint_target_model == "flash-custom"
+    assert settings.video_hint_plan_model == "sonnet-custom"
+    assert settings.video_hint_videohints_model == "flash-hints"

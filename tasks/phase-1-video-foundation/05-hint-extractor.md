@@ -7,7 +7,8 @@ issue: "77"
 depends_on: ["1.02", "1.04"]
 blocks: ["1.10"]
 estimate: "M"
-status: "todo"
+status: "done"
+completed_at: "2026-06-01"
 owner: ""
 sprint: ""
 ---
@@ -25,21 +26,21 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] env: `VIDEO_HINT_TARGET_MODEL`(Flash) / `VIDEO_HINT_PLAN_MODEL`(Sonnet) / `VIDEO_HINT_VIDEOHINTS_MODEL`(Flash)
-- [ ] `trim_tool_messages_strict`(ToolMessage ≤100자) 미들웨어 확인
+- [x] env: `VIDEO_HINT_TARGET_MODEL`(Flash) / `VIDEO_HINT_PLAN_MODEL`(Sonnet) / `VIDEO_HINT_VIDEOHINTS_MODEL`(Flash)
+- [x] `trim_tool_messages_strict`(ToolMessage ≤100자) 미들웨어 확인
 
 ## 구현 체크리스트
 
-- [ ] Stage 1a `select_target_turn(messages)` → `TargetSelection` (Flash, 메타뷰 trim — 라우팅만)
-- [ ] Stage 1b `extract_solution_plan(target_slice)` → `SolutionPlan` (Sonnet, **미들웨어 미부착** 풀 evidence — ADR 0006)
-- [ ] Step 2 `extract_video_hints(problem_text, solution_plan)` → `VideoHints` (Flash, messages 다시 안 봄)
-- [ ] 단위 테스트: 1a 대상 식별 정확도 + 1b 환각 회귀(stdout 숫자가 `final_answer`에 보존)
+- [x] Stage 1a `select_target_turn(messages)` → `TargetSelection` (Flash, 메타뷰 trim — 라우팅만)
+- [x] Stage 1b `extract_solution_plan(target_slice)` → `SolutionPlan` (Sonnet, **미들웨어 미부착** 풀 evidence — ADR 0006)
+- [x] Step 2 `extract_video_hints(problem_text, solution_plan)` → `VideoHints` (Flash, messages 다시 안 봄)
+- [x] 단위 테스트: 1a 대상 식별 정확도 + 1b 환각 회귀(stdout 숫자가 `final_answer`에 보존)
 
 ## Definition of Done
 
-- [ ] 멀티턴 "아까 N번" 대상 해소 테스트 통과
-- [ ] 1b 환각 회귀 테스트 통과 (evidence-based 충실성)
-- [ ] 자동화된 테스트 통과
+- [x] 멀티턴 "아까 N번" 대상 해소 테스트 통과
+- [x] 1b 환각 회귀 테스트 통과 (evidence-based 충실성)
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 

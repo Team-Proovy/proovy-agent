@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     video_tts_temperature: float = 0.9
     video_tts_timestamp_type: Literal["WORD"] = "WORD"
     video_tts_timeout_seconds: float = 60.0
+    video_hint_target_model: str = Field(
+        default="flash",
+        validation_alias="VIDEO_HINT_TARGET_MODEL",
+    )
+    video_hint_plan_model: str = Field(
+        default="sonnet",
+        validation_alias="VIDEO_HINT_PLAN_MODEL",
+    )
+    video_hint_videohints_model: str = Field(
+        default="flash",
+        validation_alias="VIDEO_HINT_VIDEOHINTS_MODEL",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
