@@ -43,3 +43,4 @@ sprint: ""
 
 - deterministic enforcer / forbidden_requirements는 MVP 제외 — 위험 코드 차단은 AST(3.01)+sandbox가 hard gate
 - Phase A는 deterministic 템플릿만 선택 (visual_scene/graph_plot은 Phase C)
+- `SCRIPTIFY_CONSERVATIVE_DEFAULTS`는 1.07에서 prompt 가이드와 회귀 테스트로 고정한다. render stage가 소비할 명시 필드가 필요하면 후속 render/template task에서 계약을 확장한다.

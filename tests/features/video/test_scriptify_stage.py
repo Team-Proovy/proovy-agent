@@ -20,6 +20,7 @@ from proovy_agent.features.video.pipeline.stages.scriptify import (
 )
 from proovy_agent.features.video.visual_types import (
     PHASE_A_DETERMINISTIC_VISUAL_TYPES,
+    VisualTypeRegistry,
     create_phase_a_visual_type_registry,
 )
 
@@ -66,9 +67,13 @@ def _job(video_hints: VideoHints | None = None) -> VideoPipelineJob:
     )
 
 
-def _one_step_script(visual_type: str = "equation_write") -> VideoScript:
+def _one_step_script(
+    visual_type: str = "equation_write",
+    *,
+    title: str = "일차방정식 풀이",
+) -> VideoScript:
     return VideoScript(
-        title="일차방정식 풀이",
+        title=title,
         segments=[
             ScriptSegment(
                 segment_id="step-1",
@@ -97,6 +102,10 @@ def _one_step_script(visual_type: str = "equation_write") -> VideoScript:
         ],
         final_answer="x = 3",
     )
+
+
+def _render_stub(**kwargs: object) -> dict[str, object]:
+    return kwargs
 
 
 async def test_stage_scriptify_builds_registry_valid_deterministic_script() -> None:
@@ -131,6 +140,38 @@ async def test_stage_scriptify_builds_registry_valid_deterministic_script() -> N
     ]
 
 
+async def test_stage_scriptify_does_not_leak_final_answer_into_middle_note() -> None:
+    plan = SolutionPlan(
+        title="설명 단계가 포함된 풀이",
+        steps=[
+            SolutionStep(
+                step_number=1,
+                explanation="식을 정리합니다.",
+                latex_expression="2x = 6",
+            ),
+            SolutionStep(
+                step_number=2,
+                explanation="양변에 같은 연산을 적용해야 합니다.",
+            ),
+            SolutionStep(
+                step_number=3,
+                explanation="x 값을 구합니다.",
+                latex_expression="x = 3",
+            ),
+        ],
+        final_answer="x = 3",
+    )
+    ctx = StageContext()
+
+    script = await stage_scriptify(plan, job=_job(_sample_hints()), ctx=ctx)
+
+    middle_segment = next(segment for segment in script.segments if segment.segment_id == "step-2")
+    assert middle_segment.visual_type == "outro_summary"
+    assert "final_answer" not in middle_segment.params
+    assert script.segments[-2].segment_id == "final-answer"
+    assert script.segments[-2].params["result_latex"] == "x = 3"
+
+
 async def test_stage_scriptify_injects_director_policy_into_structured_llm_prompt() -> None:
     class CapturingStructuredLLM:
         def __init__(self) -> None:
@@ -142,7 +183,7 @@ async def test_stage_scriptify_injects_director_policy_into_structured_llm_promp
 
     class CapturingLLM:
         def __init__(self) -> None:
-            self.structured = CapturingStructuredLLM()
+            self.structured: CapturingStructuredLLM = CapturingStructuredLLM()
             self.schema: type[VideoScript] | None = None
 
         def with_structured_output(self, schema: type[VideoScript]) -> CapturingStructuredLLM:
@@ -182,6 +223,23 @@ async def test_stage_scriptify_rejects_non_deterministic_visual_types_from_llm()
         await stage_scriptify(_sample_plan(), job=_job(_sample_hints()), ctx=ctx)
 
 
+async def test_stage_scriptify_rejects_title_drift_from_llm() -> None:
+    class TitleDriftLLM:
+        def with_structured_output(self, schema: type[VideoScript]) -> object:
+            class Structured:
+                async def ainvoke(self, messages: list[object]) -> VideoScript:
+                    _ = messages
+                    return _one_step_script(title="다른 제목")
+
+            _ = schema
+            return Structured()
+
+    ctx = StageContext(llm=TitleDriftLLM())
+
+    with pytest.raises(InvalidStageOutputError, match="title"):
+        await stage_scriptify(_sample_plan(), job=_job(_sample_hints()), ctx=ctx)
+
+
 async def test_stage_scriptify_rejects_params_that_do_not_match_registry_schema() -> None:
     invalid_script = _one_step_script()
     invalid_script.segments[0].params = {
@@ -202,6 +260,54 @@ async def test_stage_scriptify_rejects_params_that_do_not_match_registry_schema(
     ctx = StageContext(llm=InvalidParamsLLM())
 
     with pytest.raises(InvalidStageOutputError, match="params"):
+        await stage_scriptify(_sample_plan(), job=_job(_sample_hints()), ctx=ctx)
+
+
+async def test_stage_scriptify_rejects_derivation_that_exceeds_phase_a_line_limit() -> None:
+    invalid_script = _one_step_script()
+    invalid_script.segments[1].params["latex_steps"] = [
+        "2x = 6",
+        "x = 3",
+        "x + 0 = 3",
+        "x = 3 + 0",
+        "x = 3",
+        "\\boxed{x = 3}",
+    ]
+
+    class LongDerivationLLM:
+        def with_structured_output(self, schema: type[VideoScript]) -> object:
+            class Structured:
+                async def ainvoke(self, messages: list[object]) -> VideoScript:
+                    _ = messages
+                    return invalid_script
+
+            _ = schema
+            return Structured()
+
+    ctx = StageContext(llm=LongDerivationLLM())
+
+    with pytest.raises(InvalidStageOutputError, match="params"):
+        await stage_scriptify(_sample_plan(), job=_job(_sample_hints()), ctx=ctx)
+
+
+async def test_stage_scriptify_rejects_registry_without_phase_a_types_before_generation() -> None:
+    registry = VisualTypeRegistry()
+    registry.register(
+        "custom_visual",
+        schema={"type": "object"},
+        prompt_snippet="Custom visual.",
+        render_fn=_render_stub,
+        narration_alignment_rule="Custom narration rule.",
+    )
+
+    class ExplodingLLM:
+        def with_structured_output(self, schema: type[VideoScript]) -> object:
+            _ = schema
+            raise AssertionError("LLM must not be called without Phase A visual types")
+
+    ctx = StageContext(registry=registry, llm=ExplodingLLM())
+
+    with pytest.raises(InvalidStageOutputError, match="no Phase A"):
         await stage_scriptify(_sample_plan(), job=_job(_sample_hints()), ctx=ctx)
 
 

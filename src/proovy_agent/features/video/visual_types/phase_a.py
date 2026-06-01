@@ -81,6 +81,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
+                    "maxItems": 5,
                 },
                 "visual_description": {"type": "string"},
                 "emphasis_targets": _STRING_ARRAY_SCHEMA,

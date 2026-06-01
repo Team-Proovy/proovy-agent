@@ -157,7 +157,10 @@ def _video_hints_list(video_hints: VideoHints | None) -> list[str]:
     return video_hints.visualization_hints
 
 
-def _emphasis_targets(video_hints: VideoHints | None, final_answer: str | None) -> list[str]:
+def _emphasis_targets(
+    video_hints: VideoHints | None,
+    final_answer: str | None = None,
+) -> list[str]:
     targets = list(video_hints.emphasis_targets) if video_hints is not None else []
     if final_answer is not None and final_answer not in targets:
         targets.append(final_answer)
@@ -201,7 +204,7 @@ def _intro_segment(
     _with_optional_list(
         params,
         key="emphasis_targets",
-        values=_emphasis_targets(video_hints, plan.final_answer),
+        values=_emphasis_targets(video_hints),
     )
     return ScriptSegment(
         segment_id="intro",
@@ -218,9 +221,8 @@ def _step_segment(
     order: int,
     previous_latex: str | None,
     video_hints: VideoHints | None,
-    final_answer: str | None,
 ) -> ScriptSegment:
-    emphasis_targets = _emphasis_targets(video_hints, final_answer)
+    emphasis_targets = _emphasis_targets(video_hints)
     if step.latex_expression is None:
         params = {
             "summary": [step.explanation],
@@ -229,8 +231,6 @@ def _step_segment(
                 video_hints,
             ),
         }
-        if final_answer is not None:
-            params["final_answer"] = final_answer
         _with_optional_list(params, key="emphasis_targets", values=emphasis_targets)
         return ScriptSegment(
             segment_id=f"step-{step.step_number}",
@@ -352,7 +352,6 @@ def _build_deterministic_script(
             order=len(segments) + 1,
             previous_latex=previous_latex,
             video_hints=video_hints,
-            final_answer=plan.final_answer,
         )
         segments.append(segment)
         if step.latex_expression is not None:
@@ -396,6 +395,12 @@ def _validate_script_contract(
     plan: SolutionPlan,
     registry: VisualTypeRegistry,
 ) -> VideoScript:
+    if script.title != plan.title:
+        raise _invalid_scriptify_output(
+            "script title must match SolutionPlan title",
+            details={"script_title": script.title, "plan_title": plan.title},
+        )
+
     if script.final_answer != plan.final_answer:
         raise _invalid_scriptify_output(
             "script final_answer must match SolutionPlan final_answer",
@@ -454,6 +459,8 @@ async def stage_scriptify(
     """Produce a render-ready script with deterministic Phase A visual types."""
     if len(ctx.registry) == 0:
         return _build_dry_run_script(plan, ctx=ctx)
+    if not _phase_a_visual_type_names(ctx.registry):
+        raise _invalid_scriptify_output("registry has no Phase A deterministic visual types")
 
     video_hints = job.input_snapshot.video_hints
     if ctx.llm is None:

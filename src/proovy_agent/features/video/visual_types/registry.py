@@ -58,8 +58,11 @@ def _validate_schema_type(schema_type: object, value: object, path: str) -> None
         if not _is_json_number(value):
             raise ValueError(f"{path} must be a number")
         return
-    if schema_type == "boolean" and not isinstance(value, bool):
-        raise ValueError(f"{path} must be a boolean")
+    if schema_type == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError(f"{path} must be a boolean")
+        return
+    raise ValueError(f"{path} schema uses unsupported type: {schema_type!r}")
 
 
 def _validate_schema_subset(schema: Mapping[str, Any], value: object, path: str) -> None:
@@ -99,6 +102,9 @@ def _validate_schema_subset(schema: Mapping[str, Any], value: object, path: str)
         min_items = schema.get("minItems")
         if isinstance(min_items, int) and len(value) < min_items:
             raise ValueError(f"{path} must contain at least {min_items} items")
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(value) > max_items:
+            raise ValueError(f"{path} must contain at most {max_items} items")
         item_schema = schema.get("items")
         if isinstance(item_schema, Mapping):
             for index, item in enumerate(value):
