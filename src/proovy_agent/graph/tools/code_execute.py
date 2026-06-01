@@ -6,7 +6,7 @@ from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.common.sse.context import current_emitter, current_tool_call_id
 from proovy_agent.common.sse.events import ToolResultPayload, ToolStartPayload
 
-_MAX_OUTPUT = 500
+_MAX_SSE_OUTPUT = 500
 
 
 @tool
@@ -43,16 +43,16 @@ async def code_execute(code: str) -> str:
     if not result.success:
         parts.append("exit_code: 1")
     output = "\n".join(parts) if parts else "(no output)"
-
-    if len(output) > _MAX_OUTPUT:
-        output = output[:_MAX_OUTPUT] + "... [TRIMMED]"
+    sse_output = output
+    if len(sse_output) > _MAX_SSE_OUTPUT:
+        sse_output = sse_output[:_MAX_SSE_OUTPUT] + "... [TRIMMED]"
 
     if emitter:
         await emitter.emit(
             ToolResultPayload(
                 name="code_execute",
                 tool_call_id=tool_call_id,
-                output=output,
+                output=sse_output,
                 success=result.success,
             )
         )
