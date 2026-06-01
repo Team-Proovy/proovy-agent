@@ -25,6 +25,7 @@ from proovy_agent.features.video.models import (
     VideoScript,
 )
 from proovy_agent.features.video.pipeline import StageContext, StageEvent, orchestrator, run_job
+from proovy_agent.features.video.pipeline.stage_context import StageProgressHandler
 from proovy_agent.features.video.pipeline.stages import (
     stage_render,
     stage_scriptify,
@@ -87,6 +88,10 @@ def _script() -> VideoScript:
         ],
         final_answer="x = 5",
     )
+
+
+def test_stage_progress_handler_type_alias_resolves_at_runtime() -> None:
+    assert StageProgressHandler.__value__ is not None
 
 
 async def test_empty_registry_and_stage_context_can_dry_run_pipeline() -> None:

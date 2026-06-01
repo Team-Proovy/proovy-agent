@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import (
+    Awaitable,
+    Callable,
+)
 from dataclasses import dataclass, field
 import inspect
 from typing import TYPE_CHECKING, Any, Literal
@@ -10,8 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from proovy_agent.features.video.visual_types import VisualTypeRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from proovy_agent.features.video.models import StageName
 
 StageEventStatus = Literal["started", "completed", "failed"]

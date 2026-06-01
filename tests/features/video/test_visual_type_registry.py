@@ -15,6 +15,7 @@ def test_empty_visual_type_registry_has_empty_catalog() -> None:
     assert len(registry) == 0
     assert list(registry) == []
     assert registry.prompt_catalog() == ""
+    assert ["not_hashable"] not in registry
 
 
 def test_registry_keeps_core_five_visual_type_fields() -> None:

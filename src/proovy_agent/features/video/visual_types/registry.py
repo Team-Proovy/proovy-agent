@@ -129,7 +129,10 @@ class VisualTypeRegistry:
         )
 
     def __contains__(self, visual_type: object) -> bool:
-        return visual_type in self._definitions
+        try:
+            return visual_type in self._definitions
+        except TypeError:
+            return False
 
     def __iter__(self) -> Iterator[VisualTypeDefinition]:
         for visual_type in sorted(self._definitions):
