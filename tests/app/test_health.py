@@ -57,9 +57,40 @@ def test_app_lifespan_initializes_and_closes_daytona(
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
     monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
+    monkeypatch.setattr(main, "create_video_job_client", lambda _settings: object())
+    monkeypatch.setattr(
+        main,
+        "create_video_artifact_url_resolver",
+        lambda _settings: object(),
+    )
     app = main.create_app()
 
     with TestClient(app):
         assert calls == ["init"]
+
+    assert calls == ["init", "close"]
+
+
+def test_app_lifespan_closes_daytona_when_later_startup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Daytona init 이후 startup 실패가 나도 shared client를 정리한다."""
+    calls: list[str] = []
+
+    async def init_daytona_client() -> None:
+        calls.append("init")
+
+    async def close_daytona_client() -> None:
+        calls.append("close")
+
+    def create_video_job_client(_settings: object) -> object:
+        raise RuntimeError("video setup failed")
+
+    monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
+    monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
+    monkeypatch.setattr(main, "create_video_job_client", create_video_job_client)
+
+    with pytest.raises(RuntimeError, match="video setup failed"), TestClient(main.create_app()):
+        pass
 
     assert calls == ["init", "close"]
