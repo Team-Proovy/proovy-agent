@@ -34,6 +34,7 @@ class _FakeCreditLedger:
         self.finalize_remaining = finalize_remaining
         self.hold_calls: list[tuple[str, Decimal, str | None]] = []
         self.finalize_calls: list[tuple[str, UUID, Decimal]] = []
+        self.release_calls: list[tuple[str, UUID]] = []
 
     async def hold(
         self,
@@ -57,6 +58,7 @@ class _FakeCreditLedger:
         return _hold(hold_id, user_id, self.finalize_remaining, CreditHoldStatus.CAPTURED)
 
     async def release_hold(self, user_id: str, hold_id: UUID) -> CreditHold:
+        self.release_calls.append((user_id, hold_id))
         return _hold(hold_id, user_id, Decimal("0"), CreditHoldStatus.RELEASED)
 
 
@@ -122,7 +124,7 @@ async def _collect_events(emitter: SSEEmitter) -> list[dict]:
 @pytest.mark.asyncio
 async def test_plan_hold_to_solve_pdf_capture_refunds_estimate() -> None:
     hold_id = uuid4()
-    ledger = _FakeCreditLedger(hold_id=hold_id, finalize_remaining=Decimal("7"))
+    ledger = _FakeCreditLedger(hold_id=hold_id, finalize_remaining=Decimal("20"))
     state = ProovyState(
         user_id="u",
         thread_id="t",
@@ -139,7 +141,7 @@ async def test_plan_hold_to_solve_pdf_capture_refunds_estimate() -> None:
             planner_update = await planner_module.planner(state)
 
         assert planner_update["hold_id"] == str(hold_id)
-        assert ledger.hold_calls == [("u", Decimal("7"), "t")]
+        assert ledger.hold_calls == [("u", Decimal("20"), "t")]
 
         emitter = SSEEmitter(thread_id="t")
         emitter_token = current_emitter.set(emitter)
@@ -161,13 +163,14 @@ async def test_plan_hold_to_solve_pdf_capture_refunds_estimate() -> None:
             current_emitter.reset(emitter_token)
 
         assert ledger.finalize_calls == [("u", hold_id, Decimal("5"))]
+        assert settlement["hold_id"] is None
         assert settlement["total_credit_cost"] == 5.0
 
         events = await _collect_events(emitter)
         credit_event = next(event for event in events if event["type"] == "credit_settled")
         assert credit_event["payload"]["actual"] == 5.0
-        assert credit_event["payload"]["reserved"] == 7.0
-        assert credit_event["payload"]["refunded"] == 2.0
+        assert credit_event["payload"]["reserved"] == 20.0
+        assert credit_event["payload"]["refunded"] == 15.0
     finally:
         current_credit_ledger_client.reset(token)
 
@@ -177,7 +180,7 @@ async def test_planner_rejects_insufficient_credits_before_execution() -> None:
     ledger = _FakeCreditLedger(
         hold_error=InsufficientCreditsError(
             user_id="u",
-            required=Decimal("7"),
+            required=Decimal("20"),
             available=Decimal("3"),
         )
     )
@@ -204,11 +207,11 @@ async def test_planner_rejects_insufficient_credits_before_execution() -> None:
         current_emitter.reset(emitter_token)
         current_credit_ledger_client.reset(credit_token)
 
-    assert ledger.hold_calls == [("u", Decimal("7"), "t")]
+    assert ledger.hold_calls == [("u", Decimal("20"), "t")]
     events = await _collect_events(emitter)
     error_event = next(event for event in events if event["type"] == "error")
     assert error_event["payload"]["code"] == "credit_exhausted"
-    assert "7 cr 필요" in error_event["payload"]["message"]
+    assert "20 cr 필요" in error_event["payload"]["message"]
 
 
 @pytest.mark.asyncio
@@ -251,6 +254,68 @@ async def test_retry_preflight_failure_does_not_create_hold() -> None:
     get_llm.assert_not_called()
     assert video_client.get_progress_calls == [("job-1", "u")]
     assert ledger.hold_calls == []
+
+
+@pytest.mark.asyncio
+async def test_retry_preflight_without_video_client_rejects_before_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = _FakeCreditLedger()
+    monkeypatch.setattr(planner_module.settings, "database_url", "")
+    state = ProovyState(
+        user_id="u",
+        thread_id="t",
+        messages=[
+            HumanMessage(
+                content="이전 영상 다시 만들기",
+                additional_kwargs={
+                    "action": "video_retry",
+                    "retry_source_job_id": "job-1",
+                },
+            )
+        ],
+    )
+
+    token = current_credit_ledger_client.set(ledger)
+    try:
+        with (
+            patch("proovy_agent.graph.nodes.planner.get_llm") as get_llm,
+            pytest.raises(planner_module.PlannerPreflightError),
+        ):
+            await planner_module.planner(state)
+    finally:
+        current_credit_ledger_client.reset(token)
+
+    get_llm.assert_not_called()
+    assert ledger.hold_calls == []
+
+
+@pytest.mark.asyncio
+async def test_planner_releases_stale_hold_before_new_plan_hold() -> None:
+    stale_hold_id = uuid4()
+    new_hold_id = uuid4()
+    ledger = _FakeCreditLedger(hold_id=new_hold_id)
+    state = ProovyState(
+        user_id="u",
+        thread_id="t",
+        hold_id=str(stale_hold_id),
+        messages=[HumanMessage(content="1+1을 풀고 PDF로 만들어줘")],
+        credit_log=[CreditEntry(node="router", action="llm_call", model="flash", cost=1.0)],
+    )
+
+    token = current_credit_ledger_client.set(ledger)
+    try:
+        with patch(
+            "proovy_agent.graph.nodes.planner.get_llm",
+            return_value=_mock_llm(_planner_output()),
+        ):
+            update = await planner_module.planner(state)
+    finally:
+        current_credit_ledger_client.reset(token)
+
+    assert ledger.release_calls == [("u", stale_hold_id)]
+    assert ledger.hold_calls == [("u", Decimal("20"), "t")]
+    assert update["hold_id"] == str(new_hold_id)
 
 
 @pytest.mark.asyncio

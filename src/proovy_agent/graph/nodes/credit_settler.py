@@ -49,6 +49,7 @@ async def credit_settler(state: ProovyState) -> dict:
 
     return {
         "total_credit_cost": cumulative,
+        "hold_id": None,
         # operator.add → settled_count + len(turn_log) = len(credit_log) (다음 턴 경계)
         "settled_count": len(turn_log),
         "messages": [

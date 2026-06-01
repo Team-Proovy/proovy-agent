@@ -15,12 +15,14 @@ MODEL_CREDIT_COST: dict[str, Decimal] = {
     "sonnet": Decimal("3"),
     "opus": Decimal("8"),
 }
+CORE_SOLVER_MAX_ITERATIONS = 5
 GENERAL_CHAT_COST = Decimal("0.5")
 CODE_GENERATE_COST = Decimal("1")
 CODE_EXECUTE_COST = Decimal("1")
 PDF_COST = Decimal("1")
 IMAGE_COST = Decimal("2")
 VIDEO_FLAT_COST = Decimal("10")
+_CORE_SOLVER_LIMIT_SUMMARY_CALLS = 1
 
 
 def _as_credit_amount(value: float | int | str | Decimal) -> Decimal:
@@ -72,5 +74,11 @@ def _estimate_solve_cost(
     explanation_mode: Literal["full", "brief"],
 ) -> Decimal:
     model_cost = MODEL_CREDIT_COST.get(selected_model, MODEL_CREDIT_COST["flash"])
-    llm_call_count = Decimal("1") + (Decimal("1") if explanation_mode == "full" else Decimal("0"))
-    return (model_cost * llm_call_count) + CODE_GENERATE_COST + CODE_EXECUTE_COST
+    verify_llm_calls = Decimal(CORE_SOLVER_MAX_ITERATIONS + _CORE_SOLVER_LIMIT_SUMMARY_CALLS)
+    explain_llm_calls = Decimal("1") if explanation_mode == "full" else Decimal("0")
+    tool_calls = Decimal(CORE_SOLVER_MAX_ITERATIONS)
+    return (
+        model_cost * (verify_llm_calls + explain_llm_calls)
+        + (CODE_GENERATE_COST * tool_calls)
+        + (CODE_EXECUTE_COST * tool_calls)
+    )

@@ -1,7 +1,9 @@
 """Planner 노드 — plan 생성 + 난이도 선택 (모델 매핑은 코드에서 관리)."""
 
+from contextlib import suppress
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -12,6 +14,7 @@ from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import ErrorPayload, PageStartPayload
 from proovy_agent.features.credits import (
     CreditAccountNotFoundError,
+    CreditLedgerError,
     InsufficientCreditsError,
     create_credit_ledger_client,
 )
@@ -159,7 +162,10 @@ async def _preflight_video_retry(state: ProovyState) -> None:
 
     client = _get_video_job_client()
     if client is None:
-        return
+        await _raise_preflight_error(
+            "invalid_input",
+            user_error_message(UserErrorCode.INVALID_RETRY_SOURCE),
+        )
 
     job = await client.get_progress(retry_source_job_id, user_id=state.user_id)
     if job is None or job.thread_id != state.thread_id:
@@ -209,12 +215,13 @@ async def _reserve_plan_hold(
     explanation_mode: Literal["full", "brief"],
     planner_credit: CreditEntry,
 ) -> str | None:
-    if state.hold_id:
-        return state.hold_id
-
     ledger = current_credit_ledger_client.get() or create_credit_ledger_client()
     if ledger is None:
         return None
+
+    if state.hold_id:
+        with suppress(ValueError, CreditLedgerError):
+            await ledger.release_hold(state.user_id, UUID(state.hold_id))
 
     required = estimate_plan_hold_amount(
         plan,
