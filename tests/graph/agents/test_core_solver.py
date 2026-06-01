@@ -11,6 +11,7 @@ from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.graph.agents.core_solver.agent import (
     _code_execute_succeeded,
     _extract_generated_messages,
+    _message_text,
     _phase1_verify,
     _trim_tool_messages,
     core_solver,
@@ -137,6 +138,13 @@ def test_extract_generated_messages_ignores_normalized_input_prefix() -> None:
     assert generated[0].content == "새 검증 메시지"
 
 
+def test_message_text_normalizes_multimodal_blocks() -> None:
+    """멀티모달 content block도 downstream 소비 가능한 문자열로 정규화한다."""
+    message = AIMessage(content=[{"type": "text", "text": "검증된 "}, {"text": "풀이"}, "3"])
+
+    assert _message_text(message) == "검증된 풀이3"
+
+
 # ── _phase1_verify ───────────────────────────────────────────────────────────
 
 
@@ -186,6 +194,37 @@ async def test_phase1_successful_code_execute_sets_verified() -> None:
         and getattr(msg, "metadata", {}).get("kind") == "verified_solution"
         for msg in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_phase1_normalizes_verified_solution_content() -> None:
+    """verified_solution 태그가 붙은 메시지는 문자열 content로 보존한다."""
+    tool_call = {"name": "code_execute", "args": {"code": "print(2)"}, "id": "tc1"}
+    fake_llm = _ToolCallingFakeModel(
+        responses=[
+            AIMessage(content="", tool_calls=[tool_call]),
+            AIMessage(
+                content=[{"type": "text", "text": "검증된 "}, {"text": "풀이"}],
+                tool_calls=[],
+            ),
+        ]
+    )
+    token = current_executor.set(_FakeExecutor())
+
+    try:
+        with patch("proovy_agent.graph.agents.core_solver.agent.get_llm", return_value=fake_llm):
+            _, messages, _, verified, _, _ = await _phase1_verify(_state(), emitter=None)
+    finally:
+        current_executor.reset(token)
+
+    assert verified
+    verified_message = next(
+        msg
+        for msg in messages
+        if isinstance(msg, AIMessage)
+        and getattr(msg, "metadata", {}).get("kind") == "verified_solution"
+    )
+    assert verified_message.content == "검증된 풀이"
 
 
 @pytest.mark.asyncio
@@ -336,6 +375,7 @@ async def test_core_solver_preserves_evidence_and_verified_solution() -> None:
     assert verified_messages[0].metadata["display"] == "content"
     assert manager.destroyed
     assert not any(entry.action == "llm_call_explain" for entry in result["credit_log"])
+    assert result["current_phase"] == "verify"
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,8 @@ issue: "75"
 depends_on: ["1.01"]
 blocks: ["1.10"]
 estimate: "S"
-status: "todo"
+status: "done"
+completed_at: "2026-05-31"
 owner: ""
 sprint: ""
 ---
@@ -24,18 +25,18 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] Planner 의도 분석 출력 스키마 확인
+- [x] Planner 의도 분석 출력 스키마 확인
 
 ## 구현 체크리스트
 
-- [ ] Planner가 의도에서 `full`/`brief` 분류 (영상만 결과물 = brief, 텍스트 풀이가 결과물 = full)
-- [ ] brief일 때 CoreSolver Phase 2 설명 생략 배선 (1.02 display=content와 연동)
-- [ ] 분류 단위 테스트 (영상 단독 → brief, 풀이 결과물 → full)
+- [x] Planner가 의도에서 `full`/`brief` 분류 (영상만 결과물 = brief, 텍스트 풀이가 결과물 = full)
+- [x] brief일 때 CoreSolver Phase 2 설명 생략 배선 (1.02 display=content와 연동)
+- [x] 분류 단위 테스트 (영상 단독 → brief, 풀이 결과물 → full)
 
 ## Definition of Done
 
-- [ ] brief 모드에서 Phase 2 토큰 스트리밍이 발생하지 않고 verified_solution이 `display="content"`로 노출
-- [ ] 자동화된 테스트 통과
+- [x] brief 모드에서 Phase 2 토큰 스트리밍이 발생하지 않고 verified_solution이 `display="content"`로 노출
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 

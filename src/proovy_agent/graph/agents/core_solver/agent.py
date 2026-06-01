@@ -282,11 +282,12 @@ def _tag_phase1_messages(messages: list, state: ProovyState, verified: bool) -> 
         )
         return tagged, summary
 
+    summary = _message_text(tagged[last_ai_idx])
     tagged[last_ai_idx] = _with_metadata(
         tagged[last_ai_idx],
         {"kind": "verified_solution", "display": display},
-    )
-    return tagged, _message_text(tagged[last_ai_idx])
+    ).model_copy(update={"content": summary})
+    return tagged, summary
 
 
 def _build_phase1_agent(state: ProovyState) -> Any:
@@ -465,6 +466,6 @@ async def core_solver(state: ProovyState) -> dict:
     return {
         "messages": new_messages,
         "credit_log": credit_entries,
-        "current_phase": "explain",
+        "current_phase": "explain" if state.explanation_mode == "full" else "verify",
         "plan": plan,
     }
