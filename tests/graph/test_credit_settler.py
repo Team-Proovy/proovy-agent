@@ -26,7 +26,7 @@ async def test_sums_total_credit() -> None:
 
 @pytest.mark.asyncio
 async def test_emits_credit_settled_event() -> None:
-    emitter = SSEEmitter()
+    emitter = SSEEmitter(thread_id="t")
     token = current_emitter.set(emitter)
     try:
         await credit_settler(_state([CreditEntry(node="x", action="a", cost=5.0)]))

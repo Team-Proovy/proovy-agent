@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from proovy_agent.app.schemas.solve import SolveRequest
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.emitter import SSEEmitter
+from proovy_agent.common.sse.events import DonePayload, ErrorPayload
 from proovy_agent.graph.builder import get_graph
 from proovy_agent.graph.state import ProovyState
 
@@ -40,8 +41,8 @@ def _build_initial_state(request: SolveRequest) -> ProovyState:
 @router.post("/solve", response_class=EventSourceResponse)
 async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
-    emitter = SSEEmitter()
     state = _build_initial_state(request)
+    emitter = SSEEmitter(thread_id=state.thread_id)
 
     async def _run() -> None:
         token = current_emitter.set(emitter)
@@ -53,12 +54,15 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
                 state,
                 config={"configurable": {"thread_id": checkpoint_thread_id}},
             )
+            # 정상 완료 신호 — 클라이언트가 EventSource onerror에 의존하지 않게 한다
+            await emitter.emit(DonePayload())
         except asyncio.CancelledError:
+            # 클라이언트 연결 종료 — done/error 둘 다 보내지 않는다
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception as exc:
             logger.exception("solve 실행 중 오류 발생")
             if not getattr(exc, "sse_emitted", False):
-                await emitter.emit("error", {"message": "풀이 중 오류가 발생했습니다."})
+                await emitter.emit(ErrorPayload(message="풀이 중 오류가 발생했습니다."))
         finally:
             await emitter.close()
             current_emitter.reset(token)
