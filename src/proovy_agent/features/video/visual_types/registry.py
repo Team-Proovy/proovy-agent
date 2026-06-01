@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
 
 
 class RenderFunction(Protocol):
@@ -28,6 +29,80 @@ def _normalize_fallback_candidates(values: tuple[str, ...] | list[str]) -> tuple
     if any(not candidate for candidate in normalized):
         raise ValueError("fallback_candidates must not contain blank items")
     return normalized
+
+
+def _is_json_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _validate_schema_type(schema_type: object, value: object, path: str) -> None:
+    if schema_type == "object":
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{path} must be an object")
+        return
+    if schema_type == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"{path} must be an array")
+        return
+    if schema_type == "string":
+        if not isinstance(value, str):
+            raise ValueError(f"{path} must be a string")
+        if not value.strip():
+            raise ValueError(f"{path} must not be blank")
+        return
+    if schema_type == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{path} must be an integer")
+        return
+    if schema_type == "number":
+        if not _is_json_number(value):
+            raise ValueError(f"{path} must be a number")
+        return
+    if schema_type == "boolean" and not isinstance(value, bool):
+        raise ValueError(f"{path} must be a boolean")
+
+
+def _validate_schema_subset(schema: Mapping[str, Any], value: object, path: str) -> None:
+    """Validate the small JSON-schema subset used by visual type params."""
+    schema_type = schema.get("type")
+    if schema_type is not None:
+        _validate_schema_type(schema_type, value, path)
+
+    enum_values = schema.get("enum")
+    if enum_values is not None and value not in enum_values:
+        raise ValueError(f"{path} must be one of {enum_values}")
+
+    if schema_type == "object" or "properties" in schema:
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{path} must be an object")
+        properties = schema.get("properties", {})
+        if not isinstance(properties, Mapping):
+            raise ValueError(f"{path} schema properties must be an object")
+        required = schema.get("required", [])
+        if not isinstance(required, list):
+            raise ValueError(f"{path} schema required must be an array")
+        missing = [key for key in required if key not in value]
+        if missing:
+            raise ValueError(f"{path} missing required fields: {', '.join(missing)}")
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                raise ValueError(f"{path} contains unsupported fields: {', '.join(extras)}")
+        for key, item_schema in properties.items():
+            if key in value and isinstance(item_schema, Mapping):
+                _validate_schema_subset(item_schema, value[key], f"{path}.{key}")
+        return
+
+    if schema_type == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"{path} must be an array")
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and len(value) < min_items:
+            raise ValueError(f"{path} must contain at least {min_items} items")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                _validate_schema_subset(item_schema, item, f"{path}[{index}]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +195,11 @@ class VisualTypeRegistry:
                     missing.append(f"{definition.visual_type}->{candidate}")
         if missing:
             raise KeyError(f"unknown fallback_candidates: {', '.join(sorted(missing))}")
+
+    def validate_params(self, visual_type: str, params: Mapping[str, Any]) -> None:
+        """Validate segment params against a registered visual_type schema subset."""
+        definition = self.require(visual_type)
+        _validate_schema_subset(definition.schema, params, "params")
 
     def prompt_catalog(self) -> str:
         """Render deterministic scriptify catalog text from registered snippets."""

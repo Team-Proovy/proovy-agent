@@ -11,7 +11,10 @@ from dataclasses import dataclass, field
 import inspect
 from typing import TYPE_CHECKING, Any, Literal
 
-from proovy_agent.features.video.visual_types import VisualTypeRegistry
+from proovy_agent.features.video.visual_types import (
+    VisualTypeRegistry,
+    create_phase_a_visual_type_registry,
+)
 
 if TYPE_CHECKING:
     from proovy_agent.features.video.models import StageName
@@ -38,7 +41,7 @@ class StageContext:
     same contract before worker-only resources exist.
     """
 
-    registry: VisualTypeRegistry = field(default_factory=VisualTypeRegistry)
+    registry: VisualTypeRegistry = field(default_factory=create_phase_a_visual_type_registry)
     settings: Any | None = None
     llm: Any | None = None
     tts: Any | None = None

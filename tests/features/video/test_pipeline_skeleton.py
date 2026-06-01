@@ -226,10 +226,17 @@ async def test_stage_scriptify_uses_sequential_order_independent_of_source_step_
     script = await stage_scriptify(raw_plan, job=_raw_job(raw_plan), ctx=StageContext())
 
     assert [(segment.segment_id, segment.order) for segment in script.segments] == [
-        ("step-1", 1),
-        ("step-3", 2),
+        ("intro", 1),
+        ("step-1", 2),
+        ("step-3", 3),
+        ("final-answer", 4),
+        ("outro", 5),
     ]
-    assert [segment.source_step_number for segment in script.segments] == [1, 3]
+    assert [
+        segment.source_step_number
+        for segment in script.segments
+        if segment.source_step_number is not None
+    ] == [1, 3]
 
 
 async def test_stage_render_rejects_missing_or_duplicate_tts_segments() -> None:
