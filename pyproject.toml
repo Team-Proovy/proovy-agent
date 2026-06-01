@@ -13,7 +13,9 @@ dependencies = [
     # ── Checkpointing ─────────────────────────────────────────────
     "langgraph-checkpoint-postgres>=3.0",  # AsyncPostgresSaver
     "psycopg[binary]>=3.2",               # async postgres driver
-    "alembic>=1.16",                       # DB migrations
+
+    # ── Migrations ────────────────────────────────────────────────
+    "alembic>=1.18.4",
 
     # ── API Layer ─────────────────────────────────────────────────
     "fastapi>=0.115",
