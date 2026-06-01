@@ -28,9 +28,12 @@ class _FakeArtifactUrlResolver:
     def __init__(self) -> None:
         self.urls: dict[str, str] = {}
         self.requested_keys: list[str] = []
+        self.should_fail = False
 
     async def final_video_url(self, artifact_object_key: str) -> str | None:
         self.requested_keys.append(artifact_object_key)
+        if self.should_fail:
+            raise RuntimeError("signing failed")
         return self.urls.get(artifact_object_key)
 
 
@@ -158,6 +161,47 @@ def test_succeeded_progress_uses_signed_url_without_exposing_object_key(
     assert artifact_url_resolver.requested_keys == [object_key]
 
 
+def test_progress_still_returns_when_signed_url_resolver_fails(
+    video_api: tuple[
+        TestClient,
+        _FakeQueue,
+        CloudRunVideoJobClient,
+        _FakeArtifactUrlResolver,
+    ],
+) -> None:
+    """Signed URL 생성 실패는 hot progress 조회를 500으로 만들지 않는다."""
+    client, _queue, video_client, artifact_url_resolver = video_api
+    create_response = client.post(
+        "/api/v1/video-jobs",
+        json={
+            "user_id": "user-1",
+            "thread_id": "thread-1",
+            "input_snapshot": {"problem_text": "2x + 1 = 7을 풀어라."},
+        },
+    )
+    job_id = create_response.json()["job_id"]
+    object_key = f"video-jobs/{job_id}/attempts/attempt-1/final.mp4"
+    artifact_url_resolver.should_fail = True
+    asyncio.run(
+        video_client.finalize(
+            job_id,
+            status=VideoJobStatus.SUCCEEDED,
+            artifact_object_key=object_key,
+        )
+    )
+
+    progress_response = client.get(
+        f"/api/v1/video-jobs/{job_id}",
+        params={"user_id": "user-1"},
+    )
+
+    assert progress_response.status_code == 200
+    progress = progress_response.json()
+    assert progress["status"] == "succeeded"
+    assert progress["user_diagnostic"] is None
+    assert artifact_url_resolver.requested_keys == [object_key]
+
+
 def test_progress_lookup_is_user_scoped(
     video_api: tuple[
         TestClient,
@@ -173,7 +217,7 @@ def test_progress_lookup_is_user_scoped(
         json={
             "user_id": "user-1",
             "thread_id": "thread-1",
-            "input": {"problem_text": "1+1은?"},
+            "input_snapshot": {"problem_text": "1+1은?"},
         },
     )
     job_id = create_response.json()["job_id"]

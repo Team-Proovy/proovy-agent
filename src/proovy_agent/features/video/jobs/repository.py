@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime
 import hashlib
 from typing import TYPE_CHECKING, Protocol
@@ -70,6 +71,18 @@ def default_cloud_tasks_name(job_id: str) -> str:
 def _unique_violation_constraint_name(exc: UniqueViolation) -> str | None:
     """Return the violated unique constraint name when psycopg exposes it."""
     return getattr(exc.diag, "constraint_name", None)
+
+
+def _validated_job_update(job: VideoJob, update: Mapping[str, Any]) -> VideoJob:
+    """Apply updates through Pydantic validation rather than model_copy."""
+    data = job.model_dump()
+    data.update(update)
+    return VideoJob.model_validate(data)
+
+
+def _copy_job(job: VideoJob) -> VideoJob:
+    """Return a defensive copy of a stored job."""
+    return deepcopy(job)
 
 
 class VideoJobRepository(Protocol):
@@ -164,12 +177,13 @@ class InMemoryVideoJobRepository:
                 progress_updated_at=created_at,
                 created_at=created_at,
             )
-            self._jobs[job.id] = job
-            return job
+            self._jobs[job.id] = _copy_job(job)
+            return _copy_job(job)
 
     async def get(self, job_id: str) -> VideoJob | None:
         async with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            return _copy_job(job) if job is not None else None
 
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         async with self._lock:
@@ -186,7 +200,7 @@ class InMemoryVideoJobRepository:
         async with self._lock:
             job = self._require_job_locked(job_id)
             if job.status in TERMINAL_JOB_STATUSES:
-                return job
+                return _copy_job(job)
 
             update: dict[str, object] = {"progress_updated_at": now_utc()}
             if stage is not None:
@@ -197,9 +211,9 @@ class InMemoryVideoJobRepository:
                 update["status"] = status
                 if status is VideoJobStatus.RUNNING and job.started_at is None:
                     update["started_at"] = update["progress_updated_at"]
-            updated = job.model_copy(update=update)
-            self._jobs[job_id] = updated
-            return updated
+            updated = _validated_job_update(job, update)
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
 
     async def finalize(
         self,
@@ -217,8 +231,12 @@ class InMemoryVideoJobRepository:
 
         async with self._lock:
             job = self._require_job_locked(job_id)
-            updated = job.model_copy(
-                update={
+            if job.status in TERMINAL_JOB_STATUSES:
+                return _copy_job(job)
+
+            updated = _validated_job_update(
+                job,
+                {
                     "status": status,
                     "artifact_object_key": artifact_object_key,
                     "error_stage": error_stage,
@@ -227,21 +245,22 @@ class InMemoryVideoJobRepository:
                     "cost": dict(cost or job.cost),
                     "progress_updated_at": now_utc(),
                     "finished_at": now_utc(),
-                }
+                },
             )
-            self._jobs[job_id] = updated
-            return updated
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
 
     async def request_cancel(self, job_id: str) -> VideoJob:
         async with self._lock:
             job = self._require_job_locked(job_id)
             if job.status in TERMINAL_JOB_STATUSES:
-                return job
-            updated = job.model_copy(
-                update={"cancel_requested": True, "progress_updated_at": now_utc()}
+                return _copy_job(job)
+            updated = _validated_job_update(
+                job,
+                {"cancel_requested": True, "progress_updated_at": now_utc()},
             )
-            self._jobs[job_id] = updated
-            return updated
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
 
     def _require_job_locked(self, job_id: str) -> VideoJob:
         job = self._jobs.get(job_id)
@@ -430,6 +449,8 @@ class PostgresVideoJobRepository:
         existing = await self.get(job_id)
         if existing is None:
             raise VideoJobNotFoundError(job_id)
+        if existing.status in TERMINAL_JOB_STATUSES:
+            return existing
 
         async with await self._connect() as conn:
             cur = await conn.execute(
@@ -444,6 +465,7 @@ class PostgresVideoJobRepository:
                     progress_updated_at = %(progress_updated_at)s,
                     finished_at = %(finished_at)s
                 WHERE id = %(id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
                 RETURNING *
                 """,
                 {
@@ -462,6 +484,9 @@ class PostgresVideoJobRepository:
             )
             row = await cur.fetchone()
             if row is None:
+                refreshed = await self.get(job_id)
+                if refreshed is not None and refreshed.status in TERMINAL_JOB_STATUSES:
+                    return refreshed
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
 
@@ -479,12 +504,16 @@ class PostgresVideoJobRepository:
                 SET cancel_requested = TRUE,
                     progress_updated_at = %(progress_updated_at)s
                 WHERE id = %(id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
                 RETURNING *
                 """,
                 {"id": job_id, "progress_updated_at": now_utc()},
             )
             row = await cur.fetchone()
             if row is None:
+                refreshed = await self.get(job_id)
+                if refreshed is not None and refreshed.status in TERMINAL_JOB_STATUSES:
+                    return refreshed
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
 

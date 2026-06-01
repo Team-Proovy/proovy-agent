@@ -1,5 +1,7 @@
 """Video job creation and progress API."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from proovy_agent.app.schemas.video_jobs import (
@@ -19,6 +21,7 @@ from proovy_agent.features.video.jobs import (
 from proovy_agent.features.video.models import VideoJob, VideoJobStatus
 
 router = APIRouter(prefix="/video-jobs")
+logger = logging.getLogger(__name__)
 
 
 def get_video_job_client(request: Request) -> VideoJobClient:
@@ -44,7 +47,11 @@ async def _resolve_final_video_url(
 ) -> str | None:
     if job.status is not VideoJobStatus.SUCCEEDED or job.artifact_object_key is None:
         return None
-    return await resolver.final_video_url(job.artifact_object_key)
+    try:
+        return await resolver.final_video_url(job.artifact_object_key)
+    except Exception:
+        logger.exception("영상 artifact signed URL 생성 실패: job_id=%s", job.id)
+        return None
 
 
 @router.post(

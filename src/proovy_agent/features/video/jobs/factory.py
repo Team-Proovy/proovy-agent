@@ -13,8 +13,10 @@ def create_video_job_client(settings: Settings) -> CloudRunVideoJobClient:
     """Create the default video job client for the current runtime settings."""
     if settings.database_url:
         repository = PostgresVideoJobRepository(settings.database_url)
-    else:
+    elif settings.debug:
         repository = InMemoryVideoJobRepository()
+    else:
+        raise RuntimeError("database_url must be set for video jobs outside debug mode")
     return CloudRunVideoJobClient(repository=repository, queue=NoopVideoTaskQueue())
 
 

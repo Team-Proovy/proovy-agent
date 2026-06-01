@@ -173,3 +173,53 @@ async def test_postgres_terminal_job_ignores_late_progress_write(
     assert late_update == failed
     assert late_update.status is VideoJobStatus.FAILED
     assert late_update.progress == {}
+
+
+async def test_postgres_terminal_job_ignores_late_finalize_write(
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """Terminal job은 stale finalize write로 성공 상태로 덮이지 않는다."""
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    failed = await repository.finalize(
+        job.id,
+        status=VideoJobStatus.FAILED,
+        error_stage=StageName.RENDER,
+        user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+    )
+
+    late_finalize = await repository.finalize(
+        job.id,
+        status=VideoJobStatus.SUCCEEDED,
+        artifact_object_key="video-jobs/final.mp4",
+    )
+
+    assert late_finalize == failed
+    assert late_finalize.status is VideoJobStatus.FAILED
+    assert late_finalize.artifact_object_key is None
+
+
+async def test_postgres_request_cancel_ignores_terminal_job(
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """Terminal job cancel 요청은 terminal 결과를 유지한다."""
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    failed = await repository.finalize(
+        job.id,
+        status=VideoJobStatus.FAILED,
+        error_stage=StageName.RENDER,
+        user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+    )
+
+    canceled = await repository.request_cancel(job.id)
+
+    assert canceled == failed
+    assert canceled.status is VideoJobStatus.FAILED
+    assert canceled.cancel_requested is False

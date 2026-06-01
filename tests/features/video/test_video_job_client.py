@@ -1,5 +1,6 @@
 """Video job client and repository tests."""
 
+from pydantic import ValidationError
 import pytest
 
 from proovy_agent.features.video.jobs import (
@@ -27,6 +28,12 @@ class _FakeQueue:
 
     async def delete(self, cloud_tasks_name: str) -> None:
         self.deleted.append(cloud_tasks_name)
+
+
+class _FailingDeleteQueue(_FakeQueue):
+    async def delete(self, cloud_tasks_name: str) -> None:
+        self.deleted.append(cloud_tasks_name)
+        raise RuntimeError("delete failed")
 
 
 def _sample_input() -> VideoJobInput:
@@ -145,3 +152,80 @@ async def test_terminal_job_ignores_late_progress_write() -> None:
     assert late_update == failed
     assert late_update.status is VideoJobStatus.FAILED
     assert late_update.progress == {}
+
+
+async def test_terminal_job_ignores_late_finalize_write() -> None:
+    """이미 terminal 상태인 job은 뒤늦은 finalize로 결과가 덮이지 않는다."""
+    client, _queue = _build_client()
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    failed = await client.finalize(
+        job.id,
+        status=VideoJobStatus.FAILED,
+        error_stage=StageName.RENDER,
+        user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+    )
+
+    late_finalize = await client.finalize(
+        job.id,
+        status=VideoJobStatus.SUCCEEDED,
+        artifact_object_key="video-jobs/final.mp4",
+    )
+
+    assert late_finalize == failed
+    assert late_finalize.status is VideoJobStatus.FAILED
+    assert late_finalize.artifact_object_key is None
+
+
+async def test_cancel_returns_persisted_job_when_queue_delete_fails() -> None:
+    """Cloud Tasks delete 실패는 이미 저장된 cancel_requested 응답을 막지 않는다."""
+    queue = _FailingDeleteQueue()
+    client = CloudRunVideoJobClient(InMemoryVideoJobRepository(), queue)
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    canceled = await client.cancel(job.id)
+
+    assert canceled.cancel_requested is True
+    assert canceled.status is VideoJobStatus.QUEUED
+    assert queue.deleted == [job.cloud_tasks_name]
+
+
+async def test_in_memory_repository_returns_defensive_copies() -> None:
+    """InMemory repository는 저장 객체 참조를 그대로 외부에 노출하지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    created = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    created.progress["segments_done"] = 99
+
+    loaded = await repository.get(created.id)
+    assert loaded is not None
+    assert loaded.progress == {}
+
+    loaded.progress["segments_done"] = 1
+    reloaded = await repository.get(created.id)
+
+    assert reloaded is not None
+    assert reloaded.progress == {}
+
+
+async def test_in_memory_repository_validates_progress_updates() -> None:
+    """Repository updates는 model_copy가 아닌 Pydantic validation을 거친다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    with pytest.raises(ValidationError, match="progress values must be non-negative"):
+        await repository.update_progress(job.id, progress={"segments_done": -1})

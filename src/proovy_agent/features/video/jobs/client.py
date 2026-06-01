@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from proovy_agent.features.video.models import StageName, UserErrorCode, VideoJobStatus
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
 
     from proovy_agent.features.video.jobs.repository import VideoJobRepository
     from proovy_agent.features.video.models import VideoJob, VideoJobInput
+
+logger = logging.getLogger(__name__)
 
 
 class VideoJobClientError(Exception):
@@ -190,5 +193,12 @@ class CloudRunVideoJobClient:
     async def cancel(self, job_id: str) -> VideoJob:
         job = await self._repository.request_cancel(job_id)
         if job.status is VideoJobStatus.QUEUED:
-            await self._queue.delete(job.cloud_tasks_name)
+            try:
+                await self._queue.delete(job.cloud_tasks_name)
+            except Exception:
+                logger.exception(
+                    "영상 작업 큐 삭제 실패: job_id=%s cloud_tasks_name=%s",
+                    job.id,
+                    job.cloud_tasks_name,
+                )
         return job

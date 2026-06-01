@@ -67,7 +67,6 @@ def upgrade() -> None:
     )
     op.create_index("ix_video_jobs_status", "video_jobs", ["status"])
     op.create_index("ix_video_jobs_problem_hash", "video_jobs", ["problem_hash"])
-    op.create_index("ix_video_jobs_cloud_tasks_name", "video_jobs", ["cloud_tasks_name"])
     op.create_index(
         "ix_video_jobs_status_progress_updated_at",
         "video_jobs",
@@ -82,7 +81,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_video_jobs_user_status_created", table_name="video_jobs")
     op.drop_index("ix_video_jobs_status_progress_updated_at", table_name="video_jobs")
-    op.drop_index("ix_video_jobs_cloud_tasks_name", table_name="video_jobs")
     op.drop_index("ix_video_jobs_problem_hash", table_name="video_jobs")
     op.drop_index("ix_video_jobs_status", table_name="video_jobs")
     op.drop_index("ix_video_jobs_thread_created", table_name="video_jobs")
