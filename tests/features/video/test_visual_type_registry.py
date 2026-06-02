@@ -83,3 +83,21 @@ def test_registry_rejects_duplicate_or_blank_metadata() -> None:
             fallback_candidates=[],
             narration_alignment_rule="Rule",
         )
+
+
+def test_registry_rejects_unsupported_schema_type() -> None:
+    registry = VisualTypeRegistry()
+    registry.register(
+        "bad_schema",
+        schema={
+            "type": "object",
+            "required": ["latex"],
+            "properties": {"latex": {"type": "strnig"}},
+        },
+        prompt_snippet="Snippet",
+        render_fn=_render_stub,
+        narration_alignment_rule="Rule",
+    )
+
+    with pytest.raises(ValueError, match="unsupported type"):
+        registry.validate_params("bad_schema", {"latex": "x = 3"})
