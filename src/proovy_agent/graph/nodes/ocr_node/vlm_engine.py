@@ -43,7 +43,7 @@ class VLMConfig(BaseModel):
 class VLMEngine:
     """Gemini 2.0 Flash 기반 OCR 엔진."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """VLM 엔진 초기화."""
         self.prompt_templates = self._initialize_prompt_templates()
         self.model_configs = self._initialize_model_configs()
@@ -125,10 +125,10 @@ COMMAND PARSING MODE ACTIVE:
     ) -> VLMResult:
         """이미지를 VLM으로 처리."""
 
-        # Gemini 2.0 Flash로 먼저 시도
+        # Primary 모델로 먼저 시도
         try:
             result = await self._process_with_model(
-                image, options, "flash"
+                image, options, options.primary_model
             )
 
             # 품질 검증
@@ -136,16 +136,20 @@ COMMAND PARSING MODE ACTIVE:
                 return result
             else:
                 # 품질이 낮으면 폴백 시도
-                if options.fallback_model and options.fallback_model != "flash":
-                    fallback_result = await self._process_with_model(
-                        image, options, options.fallback_model
-                    )
+                if options.fallback_model and options.fallback_model != options.primary_model:
+                    try:
+                        fallback_result = await self._process_with_model(
+                            image, options, options.fallback_model
+                        )
 
-                    if fallback_result.confidence >= options.quality_threshold:
-                        return fallback_result
+                        if fallback_result.confidence >= options.quality_threshold:
+                            return fallback_result
 
-                    # 두 결과 중 더 좋은 것 선택
-                    return result if result.confidence > fallback_result.confidence else fallback_result
+                        # 두 결과 중 더 좋은 것 선택
+                        return result if result.confidence > fallback_result.confidence else fallback_result
+                    except Exception:
+                        # 폴백 실패 시 기존 결과 유지
+                        return result
                 else:
                     # 폴백이 없거나 동일 모델이면 결과 그대로 반환
                     if result.confidence < options.quality_threshold:
@@ -156,12 +160,12 @@ COMMAND PARSING MODE ACTIVE:
                         )
                     return result
 
-        except VLMProcessingError as e:
-            if not e.is_recoverable:
+        except (VLMProcessingError, OCRTimeoutError) as e:
+            if isinstance(e, VLMProcessingError) and not e.is_recoverable:
                 raise
 
-            # 복구 가능한 오류면 폴백 시도
-            if options.fallback_model and options.fallback_model != "flash":
+            # 복구 가능한 오류 또는 타임아웃이면 폴백 시도
+            if options.fallback_model and options.fallback_model != options.primary_model:
                 try:
                     return await self._process_with_model(
                         image, options, options.fallback_model
@@ -280,14 +284,12 @@ COMMAND PARSING MODE ACTIVE:
         # API 호출
         async with aiohttp.ClientSession() as session:
             headers = {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key
             }
 
-            # API 키를 URL 파라미터로 추가
-            url_with_key = f"{config.api_endpoint}?key={api_key}"
-
             async with session.post(
-                url_with_key,
+                config.api_endpoint,
                 json=request_data,
                 headers=headers
             ) as response:

@@ -16,13 +16,13 @@ from proovy_agent.graph.nodes.ocr_node.vlm_engine import VLMEngine
 
 
 @pytest.fixture
-def vlm_engine():
+def vlm_engine() -> VLMEngine:
     """VLM 엔진 픽스처."""
     return VLMEngine()
 
 
 @pytest.fixture
-def sample_processed_image():
+def sample_processed_image() -> ProcessedImage:
     """샘플 처리된 이미지."""
     # 1x1 PNG 이미지 데이터 (base64)
     png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
@@ -38,7 +38,7 @@ def sample_processed_image():
 
 
 @pytest.fixture
-def default_options():
+def default_options() -> OCROptions:
     """기본 OCR 옵션."""
     return OCROptions(
         primary_model="flash",
@@ -54,14 +54,14 @@ def default_options():
 class TestVLMEngine:
     """VLM 엔진 기본 테스트."""
 
-    def test_initialization(self, vlm_engine):
+    def test_initialization(self, vlm_engine: VLMEngine) -> None:
         """엔진 초기화 테스트."""
         assert vlm_engine is not None
         assert "default" in vlm_engine.prompt_templates
         assert "flash" in vlm_engine.model_configs
         assert "gpt4o-mini" in vlm_engine.model_configs
 
-    def test_prompt_templates(self, vlm_engine):
+    def test_prompt_templates(self, vlm_engine: VLMEngine) -> None:
         """프롬프트 템플릿 테스트."""
         template = vlm_engine.prompt_templates["default"]
 

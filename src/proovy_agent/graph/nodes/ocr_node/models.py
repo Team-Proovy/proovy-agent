@@ -10,10 +10,10 @@ class OCROptions(BaseModel):
     # VLM 모델 설정
     primary_model: str = Field(
         default="flash",
-        description="주 VLM 모델 (flash, sonnet, opus)",
+        description="주 VLM 모델 (flash, gpt4o-mini)",
     )
     fallback_model: str = Field(
-        default="sonnet",
+        default="gpt4o-mini",
         description="폴백 VLM 모델",
     )
     target_language: str = Field(
@@ -48,7 +48,7 @@ class OCROptions(BaseModel):
     @classmethod
     def validate_model_names(cls, v: str) -> str:
         """VLM 모델명 유효성 검증."""
-        valid_models = {"flash", "sonnet", "opus", "gpt4o-mini"}
+        valid_models = {"flash", "gpt4o-mini"}
         if v not in valid_models:
             raise ValueError(f"지원하지 않는 모델: {v}. 지원 모델: {valid_models}")
         return v
