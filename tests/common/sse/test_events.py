@@ -27,6 +27,7 @@ from proovy_agent.common.sse.events import (
     ToolResultPayload,
     ToolStartPayload,
     to_sse,
+    to_stream_v2,
 )
 from proovy_agent.graph.state import CreditEntry, PlanStep
 
@@ -344,3 +345,50 @@ def test_every_event_type_has_envelope_class() -> None:
         f"EventType ↔ envelope 매핑 불일치 — 누락: {declared - mapped_types}, "
         f"잉여: {mapped_types - declared}"
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# to_stream_v2 — 백엔드(Proovy-server) /stream/v2 vocab 변환
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_to_stream_v2_token_maps_to_llm_token_delta() -> None:
+    """token → event:llm.token.delta, data:{delta, thread_id}."""
+    frame = to_stream_v2(TokenEvent(thread_id="th-1", seq=3, payload=TokenPayload(delta="안녕")))
+    assert frame is not None
+    assert frame["event"] == "llm.token.delta"
+    assert frame["id"] == "th-1:3"
+    data = json.loads(frame["data"])
+    assert data == {"delta": "안녕", "thread_id": "th-1"}
+
+
+def test_to_stream_v2_done_maps_to_run_completed() -> None:
+    """done → event:run.completed, data:{thread_id}."""
+    frame = to_stream_v2(DoneEvent(thread_id="th-1", seq=9, payload=DonePayload()))
+    assert frame is not None
+    assert frame["event"] == "run.completed"
+    data = json.loads(frame["data"])
+    assert data == {"thread_id": "th-1"}
+
+
+def test_to_stream_v2_error_maps_to_run_failed_with_message() -> None:
+    """error → event:run.failed, data:{message, thread_id}."""
+    frame = to_stream_v2(
+        ErrorEvent(thread_id="th-1", seq=5, payload=ErrorPayload(message="실패함"))
+    )
+    assert frame is not None
+    assert frame["event"] == "run.failed"
+    data = json.loads(frame["data"])
+    assert data == {"message": "실패함", "thread_id": "th-1"}
+
+
+def test_to_stream_v2_drops_internal_only_events() -> None:
+    """백엔드가 소비하지 않는 내부 이벤트(node_result 등)는 None으로 drop."""
+    dropped = to_stream_v2(
+        NodeResultEvent(
+            thread_id="th-1",
+            seq=2,
+            payload=NodeResultPayload(status="done", duration_ms=10),
+        )
+    )
+    assert dropped is None
