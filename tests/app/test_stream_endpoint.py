@@ -196,3 +196,30 @@ def test_stream_v2_empty_user_id_returns_422(client: TestClient) -> None:
     """빈 문자열 userId도 거부."""
     response = client.post("/stream/v2", json={"message": "1+1", "userId": ""})
     assert response.status_code == 422
+
+
+def test_stream_v2_accepts_null_optional_fields(client: TestClient) -> None:
+    """백엔드(Jackson)가 미선택 필드를 null로 보내도 422가 아니라 정상 처리한다.
+
+    기능 미선택 일반 요청은 chosenFeatures 등이 null로 직렬화되는데, 이게 422면
+    AI /stream/v2 경계에서 일반 요청이 깨진다(백엔드 계약 호환성).
+    """
+    with patch(
+        "proovy_agent.app.api.stream.get_graph",
+        return_value=_ScriptedGraph([TokenPayload(delta="x")]),
+    ):
+        response = client.post(
+            "/stream/v2",
+            json={
+                "message": "q",
+                "userId": "u",
+                "threadId": "th-1",
+                "chosenFeatures": None,
+                "filesUrl": None,
+                "agentConfig": None,
+                "streamTokens": None,
+            },
+        )
+    assert response.status_code == 200
+    events = [f["event"] for f in _parse_sse(response.text)]
+    assert events == ["llm.token.delta", "run.completed"]

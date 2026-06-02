@@ -37,3 +37,20 @@ class StreamInput(BaseModel):
         if ":" in v:
             raise ValueError("userId must not contain ':'")
         return v
+
+    # 백엔드(Jackson)는 미선택 optional 필드를 null로 직렬화한다(예: 기능 미선택 시
+    # chosenFeatures:null). null이 와도 422로 깨지지 않게 기본값으로 흡수한다.
+    @field_validator("files_url", "chosen_features", mode="before")
+    @classmethod
+    def _null_list_to_empty(cls, v: object) -> object:
+        return [] if v is None else v
+
+    @field_validator("agent_config", mode="before")
+    @classmethod
+    def _null_dict_to_empty(cls, v: object) -> object:
+        return {} if v is None else v
+
+    @field_validator("stream_tokens", mode="before")
+    @classmethod
+    def _null_bool_to_default(cls, v: object) -> object:
+        return True if v is None else v
