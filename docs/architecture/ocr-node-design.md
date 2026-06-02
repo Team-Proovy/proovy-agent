@@ -1,404 +1,573 @@
-# OCR 노드 아키텍처 설계 v1
+# OCR 노드 아키텍처 설계
 
-> **대상 위치**: `src/proovy_agent/graph/nodes/ocr_node/`  
-> **기술 스택**: VLM (Gemini 1.5 Pro) + PIL + OpenCV + Pydantic  
-> **이번 작업 범위**: OCR 노드 전체 구현. 기존 Preprocessor 대체.
+> **상태**: 설계 중  
+> **목적**: LangGraph 기반 수학 문제 풀이 에이전트에서 이미지/파일 입력을 텍스트로 변환하고 @커맨드를 파싱하는 OCR 노드의 완전한 아키텍처 설계  
+> **최종 업데이트**: 2026-06-01
 
----
+## 개요
 
-## 0. 핵심 원칙 — Preprocessor → OCR 노드 분리
+OCR 노드는 현재 `preprocessor.py`에서 수행하는 단순한 텍스트 파싱을 대체하여, **VLM 기반 고도화된 OCR + @커맨드 파싱 시스템**을 제공합니다.
 
-OCR 기능을 **독립된 노드**로 분리하여 모듈화 및 확장성을 확보합니다.
-
-| 원칙 | 설명 |
-|------|------|
-| **단일 책임** | OCR 전용 노드로 명확한 역할 분리 (이미지 → 텍스트 + 태그 + 수식) |
-| **재사용성** | 다른 노드에서도 OCR 기능 활용 가능 |
-| **테스트 용이성** | 독립된 테스트 환경 구축 가능 |
-| **확장성** | VLM, 새로운 OCR 기술 추가 용이 |
-| **State 호환성** | 기존 ProovyState 필드 구조 유지 |
-
----
-
-## 1. 설계 변경 배경
-
-### 1.1. 기존 계획 vs 새로운 설계
-
-| 구분 | 기존 계획 | 새로운 구현 | 변경 이유 |
-|------|-------------|-------------|-----------|
-| **위치** | `Preprocessor` 노드 내부 | 독립된 `OCRNode` | 모듈화, 재사용성 |
-| **책임 범위** | 이미지 → 텍스트 변환만 | 이미지 → 텍스트 + 태그 + 수식 | 기능 통합 |
-| **OCR 엔진** | 다중 엔진 (Tesseract + Vision API + PaddleOCR) | 단일 VLM 엔진 | 복잡성 제거, 한국어 최적화 |
-| **의존성** | Router와 강결합 | 독립적 노드 | 테스트 용이성 |
-
-### 1.2. VLM 엔진 선택 근거
-
-기존 계획된 다중 OCR 엔진에서 **단일 VLM 엔진**으로 변경:
-
-| 엔진 | 장점 | 단점 | 결정 |
-|------|------|------|------|
-| **PaddleOCR** | 수학 특화 | ❌ 중국 모델, 한국어 인식률 낮음 | 제외 |
-| **Tesseract** | 오픈소스, 빠름 | ❌ 수식 인식 한계 | 보류 |
-| **Vision API** | 높은 정확도 | ❌ 비용, Structured Output 미지원 | 보류 |
-| **VLM (Gemini)** | ✅ 한국어 우수, Structured Output | 비용 | **선택** |
-
----
-
-## 2. 핵심 설계 결정
-
-### 2.1. 처리 흐름 변경
-
-**기존 흐름**:
-```
-User Input → Preprocessor (VLM OCR + @커맨드 파싱) → Router
+### 현재 Preprocessor 한계점
+```python
+# 현재 preprocessor.py 구현
+async def preprocessor(state: ProovyState) -> dict:
+    problem = state.raw_input.get("problem", "")
+    tags = re.findall(r"@\S+", problem)  # 단순 정규식
+    clean_text = re.sub(r"@\S+", "", problem).strip()
+    return {
+        "ocr_text": clean_text or problem,
+        "ocr_confidence": 1.0,  # 하드코딩
+        "tags": tags,
+    }
 ```
 
-**새로운 흐름**:
-```
-User Input → OCRNode → Router → Planner
-            ↓
-        [Image Processor → VLM Engine → Math Postprocessor → Command Parser]
+**문제점**:
+- 이미지 입력 처리 불가
+- PDF 파일 지원 없음  
+- @커맨드 컨텍스트 이해 부족
+- 수학 수식 인식 불가
+- 다국어 지원 없음
+
+## 요구사항 분석
+
+### 1. 기능적 요구사항
+
+#### 1.1 입력 처리
+- **이미지 형식**: PNG, JPG, JPEG, WebP
+- **문서 형식**: PDF (다중 페이지)
+- **텍스트 형식**: 기존 텍스트 입력 유지
+- **크기 제한**: 개별 이미지 10MB, PDF 50MB
+- **해상도**: 최대 4096x4096px
+
+#### 1.2 OCR 엔진
+- **주 엔진**: Google Gemini 2.5 Flash (VLM)
+- **보조 엔진**: Gemini 1.5 Pro-002 (복잡한 수학 수식용)
+- **폴백**: Claude Sonnet 4.5 (Gemini 실패 시)
+
+#### 1.3 출력 형식
+```python
+class OCRResult(BaseModel):
+    extracted_text: str              # 통합된 텍스트
+    confidence: float               # 전체 신뢰도 (0.0-1.0)
+    command_tags: list[CommandTag]   # 파싱된 @커맨드들
+    math_expressions: list[MathExpression]  # 수식들
+    pages: list[PageResult] | None   # PDF용 페이지별 결과
+    language: str                   # 감지된 언어 ('ko', 'en', 'mixed')
+    processing_metadata: ProcessingMetadata
 ```
 
-### 2.2. Structured Output 활용
+#### 1.4 @커맨드 파싱
+- **기본 커맨드**: `@해설영상`, `@해설지`, `@단계별`, `@빠른풀이`
+- **자연어 변환**: "영상으로 만들어줘" → `@해설영상` 
+- **컨텍스트 추론**: 문장에서 의도 파악
 
-VLM의 Structured Output을 활용하여 **단일 API 호출**로 모든 정보 추출:
+### 2. 비기능적 요구사항
+
+#### 2.1 성능
+- **목표 처리 시간**: 
+  - 단일 이미지: 3초 이내
+  - PDF (5페이지): 10초 이내
+- **동시 처리**: 최대 5개 요청
+- **메모리**: 요청당 최대 500MB
+
+#### 2.2 정확도
+- **텍스트 인식**: 95% 이상
+- **수학 수식**: 90% 이상  
+- **@커맨드 파싱**: 98% 이상
+
+#### 2.3 안정성
+- **오류 처리**: Graceful degradation
+- **폴백 체계**: VLM 실패 시 단계별 대안
+- **재시도**: 일시적 오류 3회 재시도
+
+## 아키텍처 설계
+
+### 1. 전체 구조
+
+```
+OCR Node (Preprocessor 대체)
+├── FileProcessor          # 파일/이미지 전처리
+├── VLMProcessor          # VLM 기반 OCR  
+├── CommandParser         # @커맨드 파싱
+├── LanguageDetector      # 언어 감지
+├── QualityAssessment     # 품질 평가
+└── ResultAggregator      # 결과 통합
+```
+
+### 2. 상세 컴포넌트
+
+#### 2.1 FileProcessor
+**책임**: 다양한 입력 형식을 통일된 이미지로 변환
 
 ```python
-class VLMOCRResponse(BaseModel):
-    extracted_text: str           # 추출된 텍스트
-    math_expressions: list[str]   # LaTeX 수식 목록
-    detected_commands: list[str]  # @커맨드 목록
-    confidence_score: float       # 전체 신뢰도
-    language_detected: str        # 감지된 언어
-```
-
-### 2.3. State 연동 — 기존 호환성 유지
-
-**변경 없음**: 기존 ProovyState 필드 그대로 활용
-
-```python
-class ProovyState(BaseModel):
-    # OCRNode가 설정하는 필드들
-    ocr_text: str = ""                    # VLM 추출 텍스트
-    ocr_confidence: float = 0.0           # VLM 신뢰도 점수
-    tags: list[str] = Field(default_factory=list)  # 파싱된 @커맨드
-    user_solution: str | None = None      # 사용자 제공 풀이
-```
-
----
-
-## 3. 디렉토리 구조
-
-### 3.1. 파일 구성
-
-```
-src/proovy_agent/graph/nodes/ocr_node/
-├── __init__.py               # 모듈 인터페이스 + __all__
-├── models.py                 # ✅ 데이터 모델 (완료)
-├── exceptions.py             # ✅ 예외 처리 (완료)
-├── image_processor.py        # 🔄 이미지 전처리 (진행중)
-├── ocr_engines.py           # ⏳ VLM 기반 OCR 엔진
-├── math_postprocessor.py    # ⏳ 수학 표기법 후처리
-├── command_parser.py        # ⏳ @커맨드 파싱
-├── node.py                  # ⏳ OCRNode 메인 클래스
-└── config.py                # ⏳ 설정 관리
-```
-
-### 3.2. 테스트 구조
-
-```
-tests/ocr_node/
-├── __init__.py
-├── test_models.py            # ✅ 완료 (34개 테스트)
-├── test_exceptions.py        # ✅ 완료 (18개 테스트)
-├── test_image_processor.py   # 🔄 진행중
-├── test_ocr_engines.py      # ⏳ 예정
-├── test_math_postprocessor.py # ⏳ 예정
-├── test_command_parser.py    # ⏳ 예정
-├── test_node.py             # ⏳ 예정
-└── integration/             # ⏳ 예정
-    ├── test_full_pipeline.py
-    └── benchmark/
-        ├── math_images/
-        └── test_performance.py
-```
-
----
-
-## 4. 상세 구현 설계
-
-### 4.1. 이미지 전처리 파이프라인
-
-**다단계 최적화**로 VLM 인식률 향상:
-
-| 단계 | 기능 | 구현 |
-|------|------|------|
-| **품질 분석** | blur, noise, contrast 자동 감지 | ImageQuality 모델 |
-| **기본 전처리** | 크기 조정, 색상 변환 | ProcessingOptions 설정 |
-| **회전 보정** | Hough 변환으로 텍스트 각도 자동 보정 | auto_rotate() |
-| **해상도 최적화** | OCR 최적 DPI (300) 조정 | optimize_resolution() |
-| **품질 향상** | 노이즈 제거, 대비 향상, 밝기 조정 | enhance_quality() |
-| **최종 처리** | 적응형 이진화 | adaptive_threshold() |
-
-```python
-class ImageProcessor:
-    async def process(self, image: PIL.Image, options: ProcessingOptions) -> PIL.Image:
-        """전체 최적화 파이프라인 실행"""
+class FileProcessor:
+    async def process_input(self, raw_input: dict) -> list[ProcessedImage]:
+        """
+        - PDF → 페이지별 이미지 분할 (pdf2image)
+        - 이미지 → 전처리 (해상도, 회전, 품질 향상)
+        - 텍스트 → 이미지 없이 직접 전달
+        """
         
-    async def create_multiple_versions(self, image: PIL.Image) -> dict[str, PIL.Image]:
-        """VLM용 다중 버전 생성: minimal, standard, aggressive"""
+    async def preprocess_image(self, image: PIL.Image) -> ProcessedImage:
+        """
+        - 해상도 최적화 (300 DPI 목표)
+        - 자동 회전 보정
+        - 노이즈 제거
+        - 대비 향상
+        """
 ```
 
-### 4.2. VLM OCR 엔진
+**PDF 처리 전략**:
+- `pdf2image` + `poppler` 사용
+- 페이지당 별도 OCR 수행
+- 구조화된 출력: `{page1: {...}, page2: {...}}`
 
-**Gemini 1.5 Pro** 기반 OCR + Structured Output:
+#### 2.2 VLMProcessor  
+**책임**: VLM을 이용한 이미지-텍스트 변환
 
 ```python
-class VLMEngine:
-    def __init__(self, model_name: str = "gemini-1.5-pro"):
-        # OpenRouter 또는 Anthropic 클라이언트 초기화
-    
-    async def extract_text(self, image: PIL.Image) -> OCREngineResult:
+class VLMProcessor:
+    def __init__(self):
+        self.primary_model = "google/gemini-2.5-flash"
+        self.fallback_model = "anthropic/claude-sonnet-4-5"
+        
+    async def extract_text(self, image: ProcessedImage, language: str) -> VLMResult:
         """
-        Structured Output으로 모든 정보 한 번에 추출:
-        - 텍스트 (한국어 + 영어)
-        - 수학 표기법 (LaTeX 변환)
-        - @커맨드 패턴 감지
-        - 신뢰도 자체 평가
-        """
-```
-
-**프롬프트 엔지니어링 전략**:
-- 한국어 + 수학 표기법 특화 지시
-- LaTeX 형태 수식 출력 요구
-- @커맨드 패턴 명시적 감지 요청
-- 신뢰도 자체 평가 포함
-
-### 4.3. 수학 후처리 시스템
-
-OCR 결과를 **수학적으로 의미 있는 표현**으로 정제:
-
-```python
-class MathPostProcessor:
-    async def process(self, raw_text: str) -> ProcessedMathResult:
-        """
-        1. 기본 기호 정규화: ×→*, ÷→/, √→sqrt
-        2. 복잡한 수식 구조화: 분수, 지수, 적분
-        3. 함수 및 연산자 정리: sin, cos, log
-        4. 문맥 기반 보정: 변수명, 단위 처리
+        VLM 프롬프트:
+        - 수학 수식은 LaTeX 형식으로 변환  
+        - 표/그래프는 구조화된 텍스트로
+        - @커맨드 유지하여 추출
         """
 ```
 
-### 4.4. @커맨드 파싱 시스템
+**VLM 프롬프트 설계**:
+```
+당신은 수학 문제 이미지를 정확히 텍스트로 변환하는 전문가입니다.
 
-명시적 커맨드 + 자연어 의도 동시 처리:
+규칙:
+1. 수학 수식은 LaTeX 형식으로 변환하세요 ($...$, $$...$$)
+2. @로 시작하는 명령어는 정확히 보존하세요
+3. 표나 그래프는 구조화된 텍스트로 설명하세요
+4. 한글과 영어가 섞여있다면 언어를 유지하세요
+
+이미지에서 텍스트를 추출하세요:
+```
+
+#### 2.3 CommandParser
+**책임**: 자연어와 명시적 @커맨드 파싱
 
 ```python
 class CommandParser:
-    def parse(self, text: str) -> list[str]:
+    EXPLICIT_COMMANDS = {
+        "@해설영상": "video",
+        "@해설지": "pdf", 
+        "@단계별": "step_by_step",
+        "@빠른풀이": "quick_solve"
+    }
+    
+    async def parse_commands(self, text: str) -> list[CommandTag]:
         """
-        명시적: "@용어 기각역" → ["term:기각역"]
-        자연어: "기각역이 뭐야?" → ["term:기각역"]
-        복합: "@용어 기각역 @해설지" → ["term:기각역", "pdf"]
+        1. 명시적 @커맨드 추출
+        2. 자연어 의도 분석 (LLM 사용)
+        3. 컨텍스트 기반 우선순위 결정
         """
 ```
 
-### 4.5. OCRNode 메인 통합
-
-**전체 파이프라인 조율**:
-
+**자연어 → 커맨드 변환**:
 ```python
-class OCRNode:
-    async def __call__(self, state: ProovyState) -> dict:
-        """
-        1. 이미지 추출 및 검증
-        2. 이미지 전처리 (다중 버전)
-        3. VLM OCR 실행
-        4. 수학 후처리
-        5. 커맨드 파싱
-        6. State 업데이트 반환
-        """
-        return {
-            "ocr_text": final_text,
-            "ocr_confidence": confidence_score,
-            "tags": parsed_tags,
-            "user_solution": user_provided_solution
-        }
+INTENT_PATTERNS = {
+    "영상": ["video"],
+    "동영상": ["video"], 
+    "해설 영상": ["video"],
+    "PDF": ["pdf"],
+    "해설지": ["pdf"],
+    "단계별": ["step_by_step"],
+    "자세히": ["step_by_step"],
+}
 ```
 
----
-
-## 5. 성능 및 품질 목표
-
-### 5.1. 성능 메트릭
-
-| 메트릭 | 목표 값 | 측정 방법 |
-|--------|---------|-----------|
-| **인식 정확도** | 95% 이상 | 수학 문제 이미지 벤치마크 |
-| **처리 시간** | 3초 이내 | 평균 이미지 크기 기준 |
-| **한국어 정확도** | 90% 이상 | 한글 수학 용어 인식 테스트 |
-| **수식 정확도** | 85% 이상 | LaTeX 변환 정확도 |
-| **메모리 사용량** | 500MB 이하 | 이미지 전처리 포함 |
-
-### 5.2. 에러 처리 전략
-
-| 에러 유형 | 예외 클래스 | 처리 방법 |
-|----------|-----------|-----------|
-| **이미지 전처리 실패** | `ImageProcessingError` | 원본 이미지로 fallback |
-| **VLM API 실패** | `OCREngineError` | 재시도 (최대 3회) |
-| **수학 파싱 실패** | `MathParsingError` | 원본 텍스트 반환 |
-| **커맨드 파싱 실패** | `CommandParsingError` | 빈 태그 배열 반환 |
-| **신뢰도 부족** | `ConfidenceThresholdError` | 사용자에게 재촬영 요청 |
-
----
-
-## 6. 단계별 구현 계획
-
-### Phase 1: 기반 구조 (현재)
-- ✅ **데이터 모델 + 예외 처리** (#46 - 완료)
-- 🔄 **이미지 전처리 시스템** (#47 - 진행중)
-
-### Phase 2: 핵심 OCR 엔진
-- ⏳ **VLM 기반 OCR 엔진** (#48)
-- ⏳ **수학 표기법 후처리** (#49)
-- ⏳ **@커맨드 파싱 시스템** (#50)
-
-### Phase 3: 통합 및 최적화
-- ⏳ **OCRNode 메인 구현** (#51)
-- ⏳ **성능 테스트 및 벤치마킹**
-- ⏳ **기존 그래프와의 통합**
-
----
-
-## 7. 기존 시스템과의 통합
-
-### 7.1. LangGraph 연동
-
-**기존 그래프에 OCRNode 추가**:
+#### 2.4 LanguageDetector
+**책임**: 텍스트 언어 자동 감지
 
 ```python
-# 기존
-builder.add_edge(START, "preprocessor")
-builder.add_edge("preprocessor", "router")
+class LanguageDetector:
+    async def detect_language(self, text: str) -> LanguageResult:
+        """
+        - 한글/영어/혼합 감지
+        - 수학 기호 비율 계산  
+        - VLM 성능 최적화용 언어 정보 제공
+        """
+```
 
-# 새로운
+#### 2.5 QualityAssessment
+**책임**: OCR 결과 품질 평가 및 재처리 결정
+
+```python
+class QualityAssessment:
+    async def assess_quality(self, result: VLMResult, image: ProcessedImage) -> QualityReport:
+        """
+        - 신뢰도 점수 계산
+        - 수식 완성도 검사
+        - 재처리 필요성 판단
+        """
+        
+    QUALITY_THRESHOLDS = {
+        "min_confidence": 0.7,
+        "min_math_completeness": 0.8,
+        "max_unknown_chars": 0.05
+    }
+```
+
+### 3. 데이터 모델
+
+#### 3.1 핵심 모델
+
+```python
+class OCRRequest(BaseModel):
+    """OCR 처리 요청"""
+    raw_input: dict  # state.raw_input과 동일  
+    user_id: str
+    thread_id: str
+    options: OCROptions = Field(default_factory=OCROptions)
+
+class OCROptions(BaseModel):
+    """OCR 처리 옵션"""
+    target_language: str = "auto"  # 'ko', 'en', 'auto'
+    enable_math_mode: bool = True
+    enable_command_parsing: bool = True  
+    quality_threshold: float = 0.7
+    max_processing_time: float = 30.0
+    
+class ProcessedImage(BaseModel):
+    """전처리된 이미지 정보"""
+    image_data: bytes
+    format: str
+    width: int
+    height: int
+    dpi: int
+    preprocessing_applied: list[str]
+
+class VLMResult(BaseModel):
+    """VLM 처리 결과"""
+    model_name: str
+    raw_text: str
+    confidence: float
+    processing_time: float
+    token_usage: dict[str, int]
+
+class CommandTag(BaseModel):
+    """파싱된 커맨드"""
+    command: str          # 'video', 'pdf', 'step_by_step'
+    original_text: str    # '@해설영상' 또는 '영상으로 만들어줘'
+    confidence: float     # 파싱 신뢰도
+    position: int         # 텍스트 내 위치
+
+class MathExpression(BaseModel):
+    """수학 수식"""
+    latex: str           # LaTeX 형식
+    original: str        # 원본 텍스트
+    position: tuple[int, int]  # 시작, 끝 위치
+    
+class PageResult(BaseModel):
+    """PDF 페이지별 결과"""
+    page_number: int
+    text: str
+    confidence: float
+    math_expressions: list[MathExpression]
+    
+class ProcessingMetadata(BaseModel):
+    """처리 메타데이터"""
+    total_processing_time: float
+    model_used: str
+    fallback_used: bool
+    pages_processed: int
+    quality_score: float
+    language_detected: str
+```
+
+#### 3.2 State 필드 확장
+
+기존 `ProovyState`에 OCR 관련 필드 추가:
+
+```python
+class ProovyState(BaseModel):
+    # 기존 필드들...
+    
+    # OCR 확장 필드 (preprocessor 대체)
+    ocr_text: str = ""
+    ocr_confidence: float = 0.0
+    tags: list[str] = Field(default_factory=list)
+    
+    # 새로 추가
+    ocr_result: OCRResult | None = None          # 전체 OCR 결과
+    detected_language: str = "unknown"           # 감지된 언어
+    math_expressions: list[MathExpression] = Field(default_factory=list)
+    command_tags: list[CommandTag] = Field(default_factory=list)
+    processing_metadata: ProcessingMetadata | None = None
+```
+
+### 4. 예외 처리 체계
+
+```python
+class OCRError(Exception):
+    """OCR 기본 예외"""
+    
+class ImageProcessingError(OCRError):
+    """이미지 전처리 실패"""
+    
+class VLMProcessingError(OCRError):
+    """VLM 처리 실패"""
+    
+class FileConversionError(OCRError):
+    """파일 변환 실패"""
+    
+class QualityThresholdError(OCRError):
+    """품질 기준 미달"""
+    
+class LanguageDetectionError(OCRError):
+    """언어 감지 실패"""
+    
+class CommandParsingError(OCRError):
+    """커맨드 파싱 실패"""
+```
+
+## 구현 전략
+
+### 1. 단계별 개발 계획
+
+#### Phase 1: 기본 VLM OCR (1주)
+- FileProcessor 기본 구현
+- VLMProcessor Gemini 2.5 Flash 연동
+- 단일 이미지 처리
+- 기존 preprocessor 대체
+
+#### Phase 2: PDF 및 다중 페이지 (1주)  
+- PDF 페이지 분할 처리
+- 페이지별 구조화된 출력
+- 메모리 최적화
+
+#### Phase 3: 고도화된 @커맨드 파싱 (1주)
+- 자연어 의도 분석
+- LLM 기반 커맨드 추론
+- 컨텍스트 우선순위
+
+#### Phase 4: 품질 향상 및 최적화 (1주)
+- 다중 VLM 폴백
+- 품질 평가 시스템
+- 성능 튜닝
+
+### 2. LangGraph 통합
+
+#### 2.1 Builder 수정
+```python
+# builder.py에서 preprocessor → ocr_node 대체
+from proovy_agent.graph.nodes.ocr_node import OCRNode
+
+builder.add_node("ocr_node", OCRNode())
 builder.add_edge(START, "ocr_node")
 builder.add_edge("ocr_node", "router")
 ```
 
-### 7.2. 점진적 마이그레이션
-
-```mermaid
-graph LR
-    A[Phase 1: 개발] --> B[Phase 2: 테스트]
-    B --> C[Phase 3: Staging]
-    C --> D[Phase 4: 프로덕션]
-    
-    A1[OCR Node 구현] --> A
-    B1[단위/통합 테스트] --> B  
-    C1[기존 시스템 병행] --> C
-    D1[Preprocessor 대체] --> D
+#### 2.2 Router 수정  
+```python
+# router.py에서 ocr_result 활용
+async def router(state: ProovyState) -> dict:
+    # state.ocr_result.command_tags 확인
+    # 이미지 포함 여부로 use_page 결정
 ```
 
-**호환성 보장**:
-- ProovyState 필드 구조 동일 유지
-- 동일한 출력 형태 보장
-- 기존 Router 노드 무수정
+### 3. 의존성 관리
 
----
-
-## 8. 환경 설정 (.env)
-
-```bash
-# VLM OCR 설정
-OPENROUTER_API_KEY=your-openrouter-key
-VLM_MODEL_NAME=google/gemini-1.5-pro
-VLM_MAX_TOKENS=4096
-VLM_TEMPERATURE=0.1
-
-# 이미지 처리 설정  
-OCR_TARGET_DPI=300
-OCR_MAX_IMAGE_SIZE=4096
-OCR_CONFIDENCE_THRESHOLD=0.8
-
-# 처리 옵션
-OCR_ENABLE_PREPROCESSING=true
-OCR_ENABLE_MULTIPLE_VERSIONS=true
-OCR_PROCESSING_TIMEOUT=30
+#### 3.1 새로운 의존성
+```toml
+# pyproject.toml 추가
+dependencies = [
+    # 기존 의존성들...
+    "pdf2image>=3.1.0",      # PDF → 이미지 변환
+    "pillow>=10.0.0",        # 이미지 처리
+    "opencv-python>=4.8.0",  # 이미지 전처리
+    "poppler-utils",         # PDF 처리 (시스템 의존성)
+]
 ```
 
----
+#### 3.2 Docker 이미지 수정
+```dockerfile
+# Dockerfile에 추가
+RUN apt-get update && apt-get install -y \
+    poppler-utils \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+```
 
-## 9. 보안 및 제한사항
+### 4. 성능 최적화
 
-### 9.1. 보안 정책
+#### 4.1 비동기 처리
+```python
+class OCRNode:
+    async def __call__(self, state: ProovyState) -> dict:
+        # PDF 페이지들을 병렬 처리
+        tasks = [self._process_page(page) for page in pages]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+```
 
-| 항목 | 정책 | 구현 방법 |
-|------|------|-----------|
-| **이미지 크기 제한** | 50MB 이하 | Pydantic validator |
-| **API 키 관리** | 환경변수만 허용 | settings 모듈 |
-| **입력 검증** | 이미지 형식 제한 | PIL.Image 검증 |
-| **출력 크기 제한** | 텍스트 길이 제한 | 자동 truncation |
+#### 4.2 캐싱 전략  
+```python
+class VLMProcessor:
+    def __init__(self):
+        self._cache = {}  # 이미지 해시 기반 결과 캐싱
+        
+    async def extract_text(self, image: ProcessedImage) -> VLMResult:
+        image_hash = hashlib.sha256(image.image_data).hexdigest()
+        if image_hash in self._cache:
+            return self._cache[image_hash]
+```
 
-### 9.2. 리소스 제한
+## 테스트 전략
 
-| 리소스 | 제한 | 이유 |
-|--------|------|------|
-| **동시 처리** | 10개 요청 | VLM API 속도 제한 |
-| **메모리 사용량** | 500MB | 이미지 전처리 메모리 |
-| **처리 시간** | 30초 타임아웃 | 사용자 경험 |
+### 1. 단위 테스트
 
----
+```python
+class TestFileProcessor:
+    async def test_pdf_conversion(self):
+        # PDF → 이미지 변환 테스트
+        
+    async def test_image_preprocessing(self):
+        # 이미지 전처리 파이프라인 테스트
 
-## 10. 확정 사항
+class TestVLMProcessor:
+    async def test_math_formula_extraction(self):
+        # 수학 수식 인식 테스트
+        
+    async def test_fallback_mechanism(self):
+        # VLM 폴백 테스트
 
-| 항목 | 결정 |
-|------|------|
-| **핵심 원칙** | Preprocessor → OCR 노드 분리 (모듈화, 재사용성) |
-| **OCR 엔진** | 단일 VLM 엔진 (Gemini 1.5 Pro) |
-| **State 호환성** | 기존 ProovyState 필드 구조 유지 |
-| **처리 방식** | Structured Output 활용 단일 API 호출 |
-| **이미지 전처리** | 다단계 최적화 파이프라인 |
-| **에러 처리** | Fallback 기반 graceful degradation |
-| **테스트 전략** | Mock 기반 단위 테스트 + 실제 이미지 통합 테스트 |
-| **성능 목표** | 95% 정확도, 3초 이내 처리 |
+class TestCommandParser:
+    async def test_explicit_commands(self):
+        # @커맨드 파싱 테스트
+        
+    async def test_natural_language_intent(self):
+        # 자연어 의도 분석 테스트
+```
 
----
+### 2. 통합 테스트
 
-## 11. MVP 검증 게이트 (구현 전 필수)
+```python
+class TestOCRNodeIntegration:
+    async def test_full_pipeline(self):
+        # 전체 파이프라인 E2E 테스트
+        
+    async def test_state_integration(self):
+        # LangGraph State 통합 테스트
+        
+    async def test_performance_benchmarks(self):
+        # 성능 기준 테스트
+```
 
-| 항목 | 내용 | 필수 |
-|------|------|:---:|
-| **VLM API 검증** | Gemini 1.5 Pro Structured Output 실제 테스트 | ✅ |
-| **이미지 라이브러리** | PIL, OpenCV 의존성 확인 및 설치 | ✅ |
-| **Settings 검증** | OCR 관련 환경변수 정의 및 검증 | ✅ |
-| **프롬프트 최적화** | 한국어 + 수학 인식 프롬프트 튜닝 | ✅ |
-| **통합 테스트** | 실제 수학 문제 이미지로 E2E 테스트 | ✅ |
-| **성능 벤치마크** | 처리 속도 및 정확도 측정 | ✅ |
-| 비용 모니터링 | VLM API 사용량 추적 | ⬜ Phase 2 |
+### 3. 실제 데이터 테스트
 
----
+- 수학 교과서 이미지 샘플
+- 손글씨 수학 문제
+- 복잡한 수식이 포함된 PDF
+- 한글/영어 혼재 문서
 
-## 12. 향후 확장 계획
+## 모니터링 및 운영
 
-### Phase 2: 고도화
-- **다중 VLM 지원**: GPT-4V, Claude 3.5 Sonnet 추가
-- **특화 프롬프트**: 문제 유형별 최적화된 프롬프트
-- **캐싱 시스템**: 동일 이미지 재처리 방지
+### 1. 메트릭스
 
-### Phase 3: 고급 기능
-- **실시간 OCR**: 비디오 스트림 처리
-- **표/그래프 추출**: 구조화된 데이터 추출
-- **다국어 확장**: 중국어, 일본어 수학 문제
+```python
+# 처리 시간 추적
+PROCESSING_TIME_HISTOGRAM = Histogram(
+    'ocr_processing_duration_seconds',
+    'OCR processing time',
+    ['model', 'input_type']
+)
 
-### Phase 4: AI 강화
-- **품질 자동 개선**: 이미지 전처리 파라미터 자동 조정
-- **오류 자동 수정**: OCR 결과 자동 검증 및 보정
-- **학습 기반 최적화**: 사용 패턴 기반 성능 향상
+# 정확도 추적  
+OCR_ACCURACY_GAUGE = Gauge(
+    'ocr_accuracy_score',
+    'OCR accuracy score',
+    ['model', 'language']
+)
 
----
+# 실패율 추적
+OCR_FAILURE_COUNTER = Counter(
+    'ocr_failures_total',
+    'OCR processing failures',
+    ['error_type', 'model']
+)
+```
 
-**문서 버전**: v1.0  
-**최종 수정**: 2026-05-20  
-**관련 이슈**: #45-51 (OCR 시스템 구현)
+### 2. 로깅
+
+```python
+logger = logging.getLogger(__name__)
+
+# 구조화된 로그
+logger.info(
+    "OCR processing completed",
+    extra={
+        "user_id": request.user_id,
+        "processing_time": metadata.total_processing_time,
+        "model_used": metadata.model_used,
+        "confidence": result.confidence,
+        "pages_processed": len(result.pages) if result.pages else 1
+    }
+)
+```
+
+### 3. 경보 설정
+
+- 처리 시간 > 30초
+- 정확도 < 85% (24시간 평균)
+- 실패율 > 5% (1시간 평균)
+- VLM API 에러율 > 10%
+
+## 마이그레이션 계획
+
+### 1. 기존 코드 영향도
+
+#### 1.1 수정 필요
+- `builder.py`: preprocessor → ocr_node 교체
+- `router.py`: 새로운 state 필드 활용
+- `state.py`: OCR 관련 필드 확장
+
+#### 1.2 호환성 유지
+- `state.ocr_text`, `state.tags` 기존 인터페이스 유지
+- 기존 텍스트 입력 완전 호환
+
+### 2. 배포 전략
+
+#### Phase A: 병렬 배포
+- OCR 노드 추가하되 기존 preprocessor 유지
+- A/B 테스트로 점진적 전환
+
+#### Phase B: 완전 전환
+- preprocessor 제거
+- OCR 노드로 완전 교체
+
+#### Phase C: 최적화
+- 성능 데이터 기반 튜닝
+- 고도화된 기능 추가
+
+## 결론 및 다음 단계
+
+### 성공 기준
+- ✅ 텍스트 인식 정확도 95% 이상
+- ✅ 수학 수식 인식 정확도 90% 이상  
+- ✅ @커맨드 파싱 정확도 98% 이상
+- ✅ 처리 시간 목표 달성
+- ✅ 기존 워크플로우 완전 호환
+
+### 위험 요소 및 대응
+- **VLM API 불안정성** → 다중 폴백 체계
+- **처리 시간 초과** → 타임아웃 및 품질 조절
+- **메모리 사용량** → 스트리밍 처리 및 캐싱
+- **비용 증가** → 캐싱 및 효율적 모델 선택
+
+### 다음 단계
+1. **Phase 1 개발 시작**: 기본 VLM OCR 구현
+2. **Docker 환경 구성**: 의존성 설치 및 테스트
+3. **성능 벤치마크**: 실제 데이터로 기준선 설정
+4. **점진적 배포**: A/B 테스트를 통한 안전한 전환
