@@ -357,7 +357,8 @@ def test_to_stream_v2_token_maps_to_llm_token_delta() -> None:
     frame = to_stream_v2(TokenEvent(thread_id="th-1", seq=3, payload=TokenPayload(delta="안녕")))
     assert frame is not None
     assert frame["event"] == "llm.token.delta"
-    assert frame["id"] == "th-1:3"
+    # id는 싣지 않는다 — 내부 이벤트 drop으로 seq가 불연속이라 gap 오탐 방지
+    assert "id" not in frame
     data = json.loads(frame["data"])
     assert data == {"delta": "안녕", "thread_id": "th-1"}
 

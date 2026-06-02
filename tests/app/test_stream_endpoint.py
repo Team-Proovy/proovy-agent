@@ -184,3 +184,15 @@ def test_stream_v2_user_id_with_colon_returns_422(client: TestClient) -> None:
 def test_stream_v2_missing_message_returns_422(client: TestClient) -> None:
     response = client.post("/stream/v2", json={"userId": "u"})
     assert response.status_code == 422
+
+
+def test_stream_v2_missing_user_id_returns_422(client: TestClient) -> None:
+    """userId 생략 시 422 — 빈 user_id면 체크포인트 키가 충돌(멀티턴 누수)."""
+    response = client.post("/stream/v2", json={"message": "1+1"})
+    assert response.status_code == 422
+
+
+def test_stream_v2_empty_user_id_returns_422(client: TestClient) -> None:
+    """빈 문자열 userId도 거부."""
+    response = client.post("/stream/v2", json={"message": "1+1", "userId": ""})
+    assert response.status_code == 422

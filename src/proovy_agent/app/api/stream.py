@@ -23,9 +23,14 @@ from proovy_agent.graph.state import ProovyState
 router = APIRouter()
 
 
-@router.get("/health", summary="헬스체크 (백엔드 사전 체크)")
+@router.get("/health", summary="헬스체크 (liveness — 백엔드 사전 연결 확인용)")
 async def health() -> dict[str, str]:
-    """백엔드가 SSE 시작 전 호출하는 헬스 엔드포인트."""
+    """**liveness 전용** — 프로세스가 요청을 받는지만 확인한다.
+
+    백엔드 `checkProovyAiHealth`는 연결 가능 여부(connection-refused)만 보고 스트리밍을
+    시작하므로 본 엔드포인트도 그 계약에 맞춘다. checkpointer/DB/Daytona/그래프 준비
+    상태(readiness)는 검사하지 않으며, readiness가 필요해지면 별도 엔드포인트로 분리한다.
+    """
     return {"status": "ok"}
 
 

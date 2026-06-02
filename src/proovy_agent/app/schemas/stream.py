@@ -18,7 +18,9 @@ class StreamInput(BaseModel):
 
     message: str = Field(..., description="사용자 입력(문제)")
     thread_id: str | None = Field(None, alias="threadId", description="대화 맥락 ID (없으면 생성)")
-    user_id: str = Field("", alias="userId", description="사용자 ID")
+    # 필수·비공백. 빈 user_id면 체크포인트 키가 ":{thread_id}"로 수렴해 threadId를 아는
+    # 호출자끼리 멀티턴 상태가 공유될 수 있다(/solve와 동일하게 필수로 강제).
+    user_id: str = Field(..., alias="userId", min_length=1, description="사용자 ID")
 
     # v1 미사용 — 수용만 (백엔드가 크레딧·인증·파일을 책임)
     files_url: list[str] = Field(default_factory=list, alias="filesUrl")

@@ -249,6 +249,10 @@ def to_stream_v2(event: SSEEvent) -> dict[str, str] | None:
     종료는 `run.completed`/`run.failed`로 감지하며, 어느 이벤트든 `data.thread_id`로
     첫 턴 threadId를 영속화한다. 그 외 내부 이벤트(page_start/tool_*/progress 등)는
     백엔드가 소비하지 않으므로 None으로 drop한다 (envelope 설계는 /solve에서 유지).
+
+    SSE `id`는 싣지 않는다. 백엔드는 서버-투-서버 WebClient Flux로 소비하며
+    `Last-Event-ID` 재연결을 쓰지 않고, 내부 이벤트 drop으로 seq가 불연속이라 id를
+    실으면 소비자가 gap을 오탐할 수 있다. 재연결/replay는 백엔드 durable store 관할.
     """
     if isinstance(event, TokenEvent):
         name = "llm.token.delta"
@@ -263,6 +267,5 @@ def to_stream_v2(event: SSEEvent) -> dict[str, str] | None:
         return None
     return {
         "event": name,
-        "id": f"{event.thread_id}:{event.seq}",
         "data": json.dumps(data, ensure_ascii=False),
     }
