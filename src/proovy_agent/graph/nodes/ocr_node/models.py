@@ -48,7 +48,7 @@ class OCROptions(BaseModel):
     @classmethod
     def validate_model_names(cls, v: str) -> str:
         """VLM 모델명 유효성 검증."""
-        valid_models = {"flash", "sonnet", "opus"}
+        valid_models = {"flash", "sonnet", "opus", "gpt4o-mini"}
         if v not in valid_models:
             raise ValueError(f"지원하지 않는 모델: {v}. 지원 모델: {valid_models}")
         return v

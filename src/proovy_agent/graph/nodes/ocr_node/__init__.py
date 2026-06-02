@@ -13,6 +13,7 @@ from .exceptions import (
     QualityThresholdError,
     VLMProcessingError,
 )
+from .image_processor import ImageProcessor, ImageQuality, ProcessingOptions
 from .models import (
     CommandTag,
     MathExpression,
@@ -24,6 +25,7 @@ from .models import (
     ProcessingMetadata,
     VLMResult,
 )
+from .vlm_engine import VLMEngine
 
 __all__ = [
     "CommandParsingError",
@@ -31,6 +33,8 @@ __all__ = [
     "ConfidenceThresholdError",
     "FileConversionError",
     "ImageProcessingError",
+    "ImageProcessor",
+    "ImageQuality",
     "LanguageDetectionError",
     "MathExpression",
     "MathParsingError",
@@ -43,7 +47,9 @@ __all__ = [
     "PageResult",
     "ProcessedImage",
     "ProcessingMetadata",
+    "ProcessingOptions",
     "QualityThresholdError",
+    "VLMEngine",
     "VLMProcessingError",
     "VLMResult",
 ]
