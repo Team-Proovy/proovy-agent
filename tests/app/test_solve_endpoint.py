@@ -11,6 +11,7 @@ from pydantic import BaseModel, TypeAdapter
 import pytest
 
 from proovy_agent.app import main
+from proovy_agent.app.api.v1 import solve as solve_module
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import (
     PageStartPayload,
@@ -231,3 +232,34 @@ def test_solve_emits_error_and_no_done_on_exception(client: TestClient) -> None:
     payload = frames[-1]["data"]["payload"]
     assert payload["code"] == "internal_error"
     assert payload["message"] == "풀이 중 오류가 발생했습니다."
+
+
+def test_solve_configures_ping_heartbeat(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """EventSourceResponse에 ping 간격이 설정되는지 검증 — 설정 계약 테스트 (§6.1).
+
+    실제 ': ping' 코멘트 라인이 유휴 구간에 나가는지는 검증하지 않는다(sse-starlette
+    내부 동작). 엔드포인트가 ping 간격을 올바른 값으로 구성하는지만 확인한다.
+    """
+    captured: dict = {}
+
+    real_ese = solve_module.EventSourceResponse
+
+    def _capture_ese(*args: object, **kwargs: object) -> object:
+        captured["ping"] = kwargs.get("ping")
+        return real_ese(*args, **kwargs)
+
+    monkeypatch.setattr(solve_module, "EventSourceResponse", _capture_ese)
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with patch("proovy_agent.app.api.v1.solve.get_graph", return_value=mock_graph):
+        response = client.post(
+            "/api/v1/solve",
+            json={"problem": "1+1은?", "user_id": "u"},
+        )
+
+    assert response.status_code == 200
+    assert captured.get("ping") == solve_module._SSE_PING_INTERVAL

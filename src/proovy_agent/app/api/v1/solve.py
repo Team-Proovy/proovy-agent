@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # fire-and-forget 태스크 참조 유지 (GC 방지)
 _active_tasks: set[asyncio.Task[None]] = set()
 
+# SSE ping 간격(초). sse-starlette 기본값(15)과 동일하나, 설계 §6.1 계약을 코드로
+# 명시하고 라이브러리 기본값 변경 시 회귀를 막기 위해 고정한다. 배포 LB/프록시의
+# idle 타임아웃이 15초보다 짧으면 이 값을 줄여 튜닝한다 (인프라 설정은 배포 트랙 확인).
+_SSE_PING_INTERVAL: int = 15
+
 
 def _build_initial_state(request: SolveRequest) -> ProovyState:
     thread_id = request.thread_id or str(uuid.uuid4())
@@ -71,4 +76,6 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
         async for event in emitter.stream():
             yield event
 
-    return EventSourceResponse(_stream())
+    # 유휴 구간 프록시 idle 타임아웃 방지 + SSE 연결 끊김 시 스트림 종료.
+    # (그래프 풀이는 별도 fire-and-forget 태스크라 disconnect로 취소되지 않음 — _run 참고)
+    return EventSourceResponse(_stream(), ping=_SSE_PING_INTERVAL)
