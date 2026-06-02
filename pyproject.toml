@@ -9,33 +9,29 @@ dependencies = [
     "langchain>=1.0",                      # create_agent, middleware
     "langgraph>=1.1",                      # Command API, Send API, StateGraph
     "langchain-openrouter>=0.2",           # ChatOpenRouter (공식 1st-party)
-
     # ── Checkpointing ─────────────────────────────────────────────
     "langgraph-checkpoint-postgres>=3.0",  # AsyncPostgresSaver
     "psycopg[binary]>=3.2",               # async postgres driver
-
     # ── Migrations ────────────────────────────────────────────────
     "alembic>=1.18.4",
-
     # ── API Layer ─────────────────────────────────────────────────
     "fastapi>=0.115",
     "httpx>=0.27",                        # HTTP clients + FastAPI TestClient
     "uvicorn[standard]>=0.32",
     "sse-starlette>=2.1",                  # SSE 이벤트 스트리밍
-
     # ── Sandbox ───────────────────────────────────────────────────
     "daytona>=0.158",                      # from daytona import AsyncDaytona
-
     # ── Config & Validation ───────────────────────────────────────
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-
     # ── Template Rendering ────────────────────────────────────────
     "jinja2>=3.0",
-
     # ── PDF Generation ─────────────────────────────────────────────
     "weasyprint>=62.0",
     "pdf2image>=1.17.0",
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.2.0",
+    "numpy>=2.4.6",
 ]
 
 [build-system]
