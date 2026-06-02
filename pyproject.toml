@@ -13,6 +13,7 @@ dependencies = [
     # ── Checkpointing ─────────────────────────────────────────────
     "langgraph-checkpoint-postgres>=3.0",  # AsyncPostgresSaver
     "psycopg[binary]>=3.2",               # async postgres driver
+    "psycopg-pool>=3.2",                  # shared postgres connection pools
 
     # ── Migrations ────────────────────────────────────────────────
     "alembic>=1.18.4",

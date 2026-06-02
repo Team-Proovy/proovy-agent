@@ -23,6 +23,7 @@ from proovy_agent.features.credits.service import (
     CreditLedgerClient,
     PostgresCreditLedgerClient,
     create_credit_ledger_client,
+    open_credit_ledger_client,
 )
 
 __all__ = [
@@ -43,5 +44,6 @@ __all__ = [
     "PostgresCreditLedgerClient",
     "create_credit_ledger_client",
     "normalize_credit_amount",
+    "open_credit_ledger_client",
     "setup_credit_ledger",
 ]

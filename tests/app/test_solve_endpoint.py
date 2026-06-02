@@ -2,8 +2,11 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
@@ -17,6 +20,8 @@ from proovy_agent.common.sse.events import (
     SSEEvent,
     TokenPayload,
 )
+from proovy_agent.features.credits.models import CreditHold, CreditHoldStatus
+from proovy_agent.graph.runtime import current_credit_ledger_client
 from proovy_agent.graph.state import PlanStep
 
 
@@ -53,6 +58,55 @@ class _ScriptedGraph:
         for payload in self._payloads:
             await emitter.emit(payload)
         return {}
+
+
+class _FakeCreditLedger:
+    def __init__(self, hold_id: UUID | None = None) -> None:
+        self.hold_id = hold_id or uuid4()
+        self.hold_calls: list[tuple[str, Decimal, str | None]] = []
+        self.release_calls: list[tuple[str, UUID]] = []
+
+    async def hold(
+        self,
+        user_id: str,
+        amount: Decimal,
+        *,
+        plan_id: str | None = None,
+    ) -> CreditHold:
+        self.hold_calls.append((user_id, amount, plan_id))
+        return _hold(self.hold_id, user_id, amount, CreditHoldStatus.PENDING, plan_id=plan_id)
+
+    async def finalize_hold(
+        self,
+        user_id: str,
+        hold_id: UUID,
+        actual_amount: Decimal,
+    ) -> CreditHold:
+        return _hold(hold_id, user_id, actual_amount, CreditHoldStatus.CAPTURED)
+
+    async def release_hold(self, user_id: str, hold_id: UUID) -> CreditHold:
+        self.release_calls.append((user_id, hold_id))
+        return _hold(hold_id, user_id, Decimal("0"), CreditHoldStatus.RELEASED)
+
+
+def _hold(
+    hold_id: UUID,
+    user_id: str,
+    amount: Decimal,
+    status: CreditHoldStatus,
+    *,
+    plan_id: str | None = None,
+) -> CreditHold:
+    now = datetime.now(UTC)
+    return CreditHold(
+        id=hold_id,
+        user_id=user_id,
+        amount=amount,
+        status=status,
+        created_at=now,
+        expires_at=now + timedelta(minutes=20),
+        plan_id=plan_id,
+    )
 
 
 @pytest.fixture()
@@ -231,3 +285,30 @@ def test_solve_emits_error_and_no_done_on_exception(client: TestClient) -> None:
     payload = frames[-1]["data"]["payload"]
     assert payload["code"] == "internal_error"
     assert payload["message"] == "풀이 중 오류가 발생했습니다."
+
+
+def test_solve_releases_active_hold_on_graph_exception() -> None:
+    """hold 생성 후 그래프가 실패하면 pending hold를 즉시 release한다."""
+    ledger = _FakeCreditLedger()
+    app = main.create_app()
+    app.state.credit_ledger_client = ledger
+
+    class _HoldThenBoomGraph:
+        async def ainvoke(self, _state: object, config: object | None = None) -> dict:
+            runtime_ledger = current_credit_ledger_client.get()
+            assert runtime_ledger is not None
+            await runtime_ledger.hold("u", Decimal("20"), plan_id="th-1")
+            raise RuntimeError("boom")
+
+    test_client = TestClient(app)
+    with patch("proovy_agent.app.api.v1.solve.get_graph", return_value=_HoldThenBoomGraph()):
+        response = test_client.post(
+            "/api/v1/solve",
+            json={"problem": "q", "user_id": "u", "thread_id": "th-1"},
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse(response.text)
+    assert [f["data"]["type"] for f in frames] == ["error"]
+    assert ledger.hold_calls == [("u", Decimal("20"), "th-1")]
+    assert ledger.release_calls == [("u", ledger.hold_id)]

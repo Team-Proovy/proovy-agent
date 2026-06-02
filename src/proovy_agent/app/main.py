@@ -10,7 +10,7 @@ from proovy_agent.app.api.v1.router import router as v1_router
 from proovy_agent.common.checkpoint.saver import open_checkpointer
 from proovy_agent.common.config import settings
 from proovy_agent.common.sandbox.client import close_daytona_client, init_daytona_client
-from proovy_agent.features.credits import create_credit_ledger_client
+from proovy_agent.features.credits import open_credit_ledger_client
 from proovy_agent.features.video.jobs import (
     create_video_artifact_url_resolver,
     create_video_job_client,
@@ -23,15 +23,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage shared resources for the FastAPI application."""
     await init_daytona_client()
     try:
-        _app.state.credit_ledger_client = create_credit_ledger_client(settings)
-        _app.state.video_job_client = create_video_job_client(settings)
-        _app.state.video_artifact_url_resolver = create_video_artifact_url_resolver(settings)
-        async with open_checkpointer(
-            settings.database_url,
-            allow_memory_fallback=settings.debug,
-        ) as checkpointer:
-            build_graph(checkpointer)
-            yield
+        async with open_credit_ledger_client(settings) as credit_ledger_client:
+            _app.state.credit_ledger_client = credit_ledger_client
+            _app.state.video_job_client = create_video_job_client(settings)
+            _app.state.video_artifact_url_resolver = create_video_artifact_url_resolver(settings)
+            async with open_checkpointer(
+                settings.database_url,
+                allow_memory_fallback=settings.debug,
+            ) as checkpointer:
+                build_graph(checkpointer)
+                yield
     finally:
         await close_daytona_client()
 

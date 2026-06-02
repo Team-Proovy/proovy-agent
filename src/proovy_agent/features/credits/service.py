@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Protocol
 
 from psycopg import AsyncConnection
+from psycopg_pool import AsyncConnectionPool
 
 from proovy_agent.common.checkpoint.saver import _to_libpq
 from proovy_agent.common.config import settings
 from proovy_agent.features.credits.ledger import CreditLedger
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from uuid import UUID
 
     from proovy_agent.common.config import Settings
@@ -49,9 +52,21 @@ class PostgresCreditLedgerClient:
         database_url: str,
         *,
         hold_ttl_seconds: int | None = None,
+        pool: AsyncConnectionPool | None = None,
     ) -> None:
         self._database_url = _to_libpq(database_url)
         self._hold_ttl_seconds = hold_ttl_seconds
+        self._pool = pool
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[AsyncConnection]:
+        if self._pool is not None:
+            async with self._pool.connection() as conn:
+                yield conn
+            return
+
+        async with await AsyncConnection.connect(self._database_url) as conn:
+            yield conn
 
     async def hold(
         self,
@@ -60,7 +75,7 @@ class PostgresCreditLedgerClient:
         *,
         plan_id: str | None = None,
     ) -> CreditHold:
-        async with await AsyncConnection.connect(self._database_url) as conn:
+        async with self._connection() as conn:
             return await CreditLedger(
                 conn,
                 hold_ttl_seconds=self._hold_ttl_seconds,
@@ -72,14 +87,14 @@ class PostgresCreditLedgerClient:
         hold_id: UUID,
         actual_amount: CreditAmount,
     ) -> CreditHold:
-        async with await AsyncConnection.connect(self._database_url) as conn:
+        async with self._connection() as conn:
             return await CreditLedger(
                 conn,
                 hold_ttl_seconds=self._hold_ttl_seconds,
             ).finalize_hold(user_id, hold_id, actual_amount)
 
     async def release_hold(self, user_id: str, hold_id: UUID) -> CreditHold:
-        async with await AsyncConnection.connect(self._database_url) as conn:
+        async with self._connection() as conn:
             return await CreditLedger(
                 conn,
                 hold_ttl_seconds=self._hold_ttl_seconds,
@@ -96,3 +111,24 @@ def create_credit_ledger_client(
         app_settings.database_url,
         hold_ttl_seconds=app_settings.credit_hold_ttl_seconds,
     )
+
+
+@asynccontextmanager
+async def open_credit_ledger_client(
+    app_settings: Settings = settings,
+) -> AsyncIterator[CreditLedgerClient | None]:
+    """Open the app-scoped pooled credit ledger client."""
+    if not app_settings.database_url:
+        yield None
+        return
+
+    pool = AsyncConnectionPool(_to_libpq(app_settings.database_url), open=False)
+    await pool.open()
+    try:
+        yield PostgresCreditLedgerClient(
+            app_settings.database_url,
+            hold_ttl_seconds=app_settings.credit_hold_ttl_seconds,
+            pool=pool,
+        )
+    finally:
+        await pool.close()

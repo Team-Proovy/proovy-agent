@@ -14,7 +14,12 @@ from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.emitter import SSEEmitter
 from proovy_agent.common.sse.events import DonePayload, ErrorPayload
 from proovy_agent.graph.builder import get_graph
-from proovy_agent.graph.runtime import current_credit_ledger_client, current_video_job_client
+from proovy_agent.graph.runtime import (
+    ActiveHoldTrackingCreditLedgerClient,
+    current_credit_ledger_client,
+    current_video_job_client,
+    track_active_credit_hold,
+)
 from proovy_agent.graph.state import ProovyState
 
 router = APIRouter()
@@ -34,12 +39,28 @@ def _build_initial_state(request: SolveRequest) -> ProovyState:
     )
 
 
+async def _release_active_credit_hold(
+    ledger: ActiveHoldTrackingCreditLedgerClient | None,
+    user_id: str,
+) -> None:
+    if ledger is None or ledger.active_hold_id is None:
+        return
+
+    hold_id = ledger.active_hold_id
+    try:
+        await ledger.release_active_hold(user_id)
+    except Exception:
+        logger.exception("그래프 실패 후 pending credit hold release 실패: hold_id=%s", hold_id)
+
+
 @router.post("/solve", response_class=EventSourceResponse)
 async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
     state = _build_initial_state(request)
     emitter = SSEEmitter(thread_id=state.thread_id)
-    credit_ledger_client = getattr(http_request.app.state, "credit_ledger_client", None)
+    credit_ledger_client = track_active_credit_hold(
+        getattr(http_request.app.state, "credit_ledger_client", None)
+    )
     video_job_client = getattr(http_request.app.state, "video_job_client", None)
 
     async def _run() -> None:
@@ -61,6 +82,7 @@ async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventS
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception as exc:
             logger.exception("solve 실행 중 오류 발생")
+            await _release_active_credit_hold(credit_ledger_client, state.user_id)
             if not getattr(exc, "sse_emitted", False):
                 await emitter.emit(ErrorPayload(message="풀이 중 오류가 발생했습니다."))
         finally:
