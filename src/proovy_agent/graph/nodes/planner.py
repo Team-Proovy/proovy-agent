@@ -1,0 +1,151 @@
+"""Planner 노드 — plan 생성 + 난이도 선택 (모델 매핑은 코드에서 관리)."""
+
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
+
+from proovy_agent.common.llm.client import get_llm
+from proovy_agent.common.sse.context import current_emitter
+from proovy_agent.common.sse.events import PageStartPayload
+from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
+
+# difficulty → selected_model 매핑은 운영 정책이므로 코드에서 관리
+_DIFFICULTY_TO_MODEL: dict[str, str] = {
+    "easy": "flash",
+    "medium": "sonnet",
+    "hard": "opus",
+}
+_VIDEO_ONLY_HINTS = (
+    "@해설영상",
+    "해설영상",
+    "해설 영상",
+    "영상으로",
+    "영상만",
+    "동영상으로",
+    "동영상만",
+    "비디오로",
+    "비디오만",
+)
+_FULL_INTENT_HINTS = (
+    "풀이도",
+    "풀이와",
+    "풀이랑",
+    "텍스트",
+    "글로",
+    "답도",
+    "해설지도",
+    "pdf",
+    "함께",
+    "같이",
+    "둘 다",
+    "둘다",
+    "풀고",
+)
+
+_SYSTEM = """당신은 수학 문제 풀이 계획을 세우는 Planner입니다.
+사용자 메시지를 분석하여 JSON 형식으로 풀이 계획을 작성하세요.
+
+steps 결정 기준:
+- 수학 문제 풀이 → action: "solve", description에 목표 명시
+- 해설 영상 요청(@해설영상, "영상 만들어줘") → action: "video" (solve 완료 후 실행)
+- 해설지 PDF 요청(@해설지, "해설지 만들어줘") → action: "pdf" (solve 완료 후 실행)
+
+difficulty 기준:
+- easy: 사칙연산, 간단한 대수
+- medium: 방정식, 확률/통계 기초, 수열
+- hard: 미적분, 선형대수, 고급 통계, 증명
+
+explanation_mode 기준:
+- "brief": 영상이 유일한 결과물인 요청. 예: "영상으로 설명해줘", "해설 영상 만들어줘", "영상만 보여줘"
+- "full": 텍스트 풀이가 결과물인 요청. 예: "풀어줘", "자세히 설명해줘", "답 알려줘"
+- 텍스트 풀이와 영상을 모두 원하는 요청 또는 모호한 요청은 반드시 "full"
+
+use_page: 이미지·그래프·코드 포함 예상이면 true, 짧은 풀이면 false"""
+
+
+class _StepInput(BaseModel):
+    action: Literal["solve", "video", "pdf"]
+    description: str
+
+
+class _PlannerOutput(BaseModel):
+    steps: list[_StepInput]
+    difficulty: Literal["easy", "medium", "hard"]
+    use_page: bool
+    explanation_mode: Literal["full", "brief"] = "full"
+
+
+def _resolve_explanation_mode(
+    requested: Literal["full", "brief"],
+    plan: list[PlanStep],
+    user_text: str = "",
+) -> Literal["full", "brief"]:
+    if requested == "brief" and any(step.action == "video" for step in plan):
+        return "brief"
+    if any(step.action == "video" for step in plan) and _is_video_only_request(user_text):
+        return "brief"
+    return "full"
+
+
+def _content_to_text(content: object) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+        )
+    return str(content)
+
+
+def _latest_human_text(state: ProovyState) -> str:
+    for msg in reversed(state.messages):
+        if isinstance(msg, HumanMessage):
+            return _content_to_text(msg.content)
+    return ""
+
+
+def _is_video_only_request(user_text: str) -> bool:
+    normalized = user_text.lower()
+    has_video_intent = any(hint.lower() in normalized for hint in _VIDEO_ONLY_HINTS)
+    has_full_intent = any(hint.lower() in normalized for hint in _FULL_INTENT_HINTS)
+    return has_video_intent and not has_full_intent
+
+
+async def planner(state: ProovyState) -> dict:
+    llm = get_llm("flash")
+    structured = llm.with_structured_output(_PlannerOutput)
+    result = await structured.ainvoke([SystemMessage(_SYSTEM), *state.messages])
+
+    plan = [PlanStep(action=s.action, description=s.description) for s in result.steps]
+
+    if not any(s.action == "solve" for s in plan):
+        plan.insert(0, PlanStep(action="solve", description="수학 문제 풀이"))
+
+    selected_model = _DIFFICULTY_TO_MODEL[result.difficulty]
+    explanation_mode = _resolve_explanation_mode(
+        result.explanation_mode,
+        plan,
+        _latest_human_text(state),
+    )
+
+    emitter = current_emitter.get()
+    if emitter and result.use_page:
+        await emitter.emit(
+            PageStartPayload(
+                plan=plan,
+                selected_model=selected_model,
+                difficulty=result.difficulty,
+                route=state.route,
+                use_page=result.use_page,
+            )
+        )
+
+    return {
+        "plan": plan,
+        "difficulty": result.difficulty,
+        "selected_model": selected_model,
+        "use_page": result.use_page,
+        "explanation_mode": explanation_mode,
+        "credit_log": [CreditEntry(node="planner", action="llm_call", model="flash", cost=1.0)],
+    }

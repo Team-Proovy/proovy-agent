@@ -1,0 +1,240 @@
+{
+  "audioContent": "ZmFrZS1tcDMtYnl0ZXM=",
+  "usage": {
+    "processedCharactersCount": 12,
+    "modelId": "inworld-tts-1.5-max"
+  },
+  "timestampInfo": {
+    "wordAlignment": {
+      "words": [
+        "",
+        "이차방정식은",
+        " ",
+        "영입니다",
+        "."
+      ],
+      "wordStartTimeSeconds": [
+        0,
+        0.2,
+        1.32,
+        1.32,
+        2
+      ],
+      "wordEndTimeSeconds": [
+        0.2,
+        1.32,
+        1.32,
+        2,
+        2.25
+      ],
+      "phoneticDetails": [
+        {
+          "wordIndex": 0,
+          "phones": [
+            {
+              "phoneSymbol": "[silence]",
+              "startTimeSeconds": 0,
+              "durationSeconds": 0.2,
+              "visemeSymbol": "bmp"
+            }
+          ],
+          "isPartial": false
+        },
+        {
+          "wordIndex": 1,
+          "phones": [
+            {
+              "phoneSymbol": "i",
+              "startTimeSeconds": 0.2,
+              "durationSeconds": 0.07000001,
+              "visemeSymbol": "ee"
+            },
+            {
+              "phoneSymbol": "t",
+              "startTimeSeconds": 0.27,
+              "durationSeconds": 0.07999998,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "ʃ",
+              "startTimeSeconds": 0.35,
+              "durationSeconds": 0.09,
+              "visemeSymbol": "chjsh"
+            },
+            {
+              "phoneSymbol": "a",
+              "startTimeSeconds": 0.44,
+              "durationSeconds": 0.089999974,
+              "visemeSymbol": "aei"
+            },
+            {
+              "phoneSymbol": "p",
+              "startTimeSeconds": 0.53,
+              "durationSeconds": 0.060000002,
+              "visemeSymbol": "bmp"
+            },
+            {
+              "phoneSymbol": "a",
+              "startTimeSeconds": 0.59,
+              "durationSeconds": 0.050000012,
+              "visemeSymbol": "aei"
+            },
+            {
+              "phoneSymbol": "ŋ",
+              "startTimeSeconds": 0.64,
+              "durationSeconds": 0.08000004,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "t",
+              "startTimeSeconds": 0.72,
+              "durationSeconds": 0.029999971,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "ʃ",
+              "startTimeSeconds": 0.75,
+              "durationSeconds": 0.04000002,
+              "visemeSymbol": "chjsh"
+            },
+            {
+              "phoneSymbol": "ʌ",
+              "startTimeSeconds": 0.79,
+              "durationSeconds": 0.049999952,
+              "visemeSymbol": "aei"
+            },
+            {
+              "phoneSymbol": "ŋ",
+              "startTimeSeconds": 0.84,
+              "durationSeconds": 0.08000004,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "ʃ",
+              "startTimeSeconds": 0.92,
+              "durationSeconds": 0.119999945,
+              "visemeSymbol": "chjsh"
+            },
+            {
+              "phoneSymbol": "i",
+              "startTimeSeconds": 1.04,
+              "durationSeconds": 0.05000007,
+              "visemeSymbol": "ee"
+            },
+            {
+              "phoneSymbol": "k",
+              "startTimeSeconds": 1.09,
+              "durationSeconds": 0.03999996,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "u",
+              "startTimeSeconds": 1.13,
+              "durationSeconds": 0.060000062,
+              "visemeSymbol": "o"
+            },
+            {
+              "phoneSymbol": "n",
+              "startTimeSeconds": 1.19,
+              "durationSeconds": 0.13,
+              "visemeSymbol": "cdgknstxyz"
+            }
+          ],
+          "isPartial": false
+        },
+        {
+          "wordIndex": 2,
+          "phones": [
+            {
+              "phoneSymbol": "[silence]",
+              "startTimeSeconds": 1.32,
+              "durationSeconds": 0,
+              "visemeSymbol": "bmp"
+            }
+          ],
+          "isPartial": false
+        },
+        {
+          "wordIndex": 3,
+          "phones": [
+            {
+              "phoneSymbol": "j",
+              "startTimeSeconds": 1.32,
+              "durationSeconds": 0.06999993,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "ʌ",
+              "startTimeSeconds": 1.39,
+              "durationSeconds": 0.029999971,
+              "visemeSymbol": "aei"
+            },
+            {
+              "phoneSymbol": "ŋ",
+              "startTimeSeconds": 1.42,
+              "durationSeconds": 0.060000062,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "i",
+              "startTimeSeconds": 1.48,
+              "durationSeconds": 0.059999943,
+              "visemeSymbol": "ee"
+            },
+            {
+              "phoneSymbol": "p",
+              "startTimeSeconds": 1.54,
+              "durationSeconds": 0.03000009,
+              "visemeSymbol": "bmp"
+            },
+            {
+              "phoneSymbol": "n",
+              "startTimeSeconds": 1.57,
+              "durationSeconds": 0.07999992,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "i",
+              "startTimeSeconds": 1.65,
+              "durationSeconds": 0.060000062,
+              "visemeSymbol": "ee"
+            },
+            {
+              "phoneSymbol": "t",
+              "startTimeSeconds": 1.71,
+              "durationSeconds": 0.06999993,
+              "visemeSymbol": "cdgknstxyz"
+            },
+            {
+              "phoneSymbol": "a",
+              "startTimeSeconds": 1.78,
+              "durationSeconds": 0.22000003,
+              "visemeSymbol": "aei"
+            }
+          ],
+          "isPartial": false
+        },
+        {
+          "wordIndex": 4,
+          "phones": [
+            {
+              "phoneSymbol": "[silence]",
+              "startTimeSeconds": 2,
+              "durationSeconds": 0.25,
+              "visemeSymbol": "bmp"
+            }
+          ],
+          "isPartial": false
+        }
+      ]
+    }
+  },
+  "_fixture_note": "Sanitized Inworld WORD response captured from live API for Hyunwoo/inworld-tts-1.5-max; audioContent replaced with fake base64.",
+  "_fixture_capture": {
+    "text": "이차방정식은 영입니다.",
+    "modelId": "inworld-tts-1.5-max",
+    "voiceId": "Hyunwoo",
+    "timestampType": "WORD",
+    "audioContentOriginalCharacters": 49724
+  }
+}

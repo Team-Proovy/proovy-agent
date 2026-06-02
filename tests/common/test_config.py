@@ -40,3 +40,16 @@ def test_settings_reads_daytona_sandbox_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.daytona_code_timeout == 120
     assert settings.daytona_max_output_chars == 12_345
     assert settings.sandbox_preamble_name == "math_v1"
+
+
+def test_settings_reads_inworld_tts_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings accepts current and legacy Inworld TTS env names."""
+    monkeypatch.setenv("INWORLD_API_KEY", "legacy-key")
+    monkeypatch.setenv("INWORLD_TTS_MODEL_ID", "inworld-tts-custom")
+    monkeypatch.setenv("INWORLD_TTS_VOICE_ID", "Mihyun")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.inworld_tts_api_key == "legacy-key"
+    assert settings.video_tts_model == "inworld-tts-custom"
+    assert settings.video_tts_voice == "Mihyun"

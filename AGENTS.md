@@ -29,7 +29,22 @@ LangGraph 기반 수학 문제 풀이 AI 에이전트 백엔드.
 ```bash
 uv run ruff check .   # 린트
 uv run ruff format .  # 포맷
-uv run pytest         # 테스트
+uv run pytest         # 테스트 (DB 불필요 — postgres 마커는 자동 skip)
+```
+
+### Postgres 체크포인터 통합 테스트
+
+실제 Postgres가 필요한 `@pytest.mark.postgres` 테스트는 기본 `pytest`에서 `DATABASE_URL`이
+없으면 skip됩니다. 격리된 Postgres로 돌리려면 Docker로 실행하세요 (Docker daemon 필요):
+
+```bash
+docker compose -f docker-compose.test.yml run --rm --build test-pg
+```
+
+`DATABASE_URL`을 직접 지정해 로컬에서 돌릴 수도 있습니다:
+
+```bash
+DATABASE_URL=postgresql://<user>:<pw>@localhost:5432/<db> uv run pytest -m postgres
 ```
 
 ## 커밋 컨벤션

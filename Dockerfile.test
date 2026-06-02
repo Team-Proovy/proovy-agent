@@ -16,14 +16,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-RUN chown -R appuser:appuser /app
-USER appuser
 
-# uv 설치
+# uv 설치 (root 단계 — 시스템 경로 쓰기)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# 프로젝트 파일 복사
+# 프로젝트 파일 복사 후 소유권을 appuser로 — 그래야 uv sync(editable 빌드)가
+# src/*.egg-info를 생성할 수 있다. (chown은 반드시 COPY 이후 root 권한으로)
 COPY . .
+RUN chown -R appuser:appuser /app
+USER appuser
 
 # 의존성 설치
 RUN uv sync
