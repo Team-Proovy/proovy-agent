@@ -12,6 +12,7 @@ from proovy_agent.graph.nodes.ocr_node.image_processor import (
     ImageQuality,
     ProcessingOptions,
 )
+from proovy_agent.graph.nodes.ocr_node.models import ProcessedImage
 
 
 class TestImageQuality:
@@ -146,8 +147,12 @@ class TestImageProcessor:
 
         result = await self.processor.process(image)
 
-        assert isinstance(result, Image.Image)
-        assert result.size[0] > 0 and result.size[1] > 0
+        assert isinstance(result, ProcessedImage)
+        assert result.width > 0 and result.height > 0
+        assert result.dpi > 0
+        assert len(result.image_data) > 0
+        assert result.format in ["png", "jpeg"]
+        assert isinstance(result.preprocessing_applied, list)
 
     @pytest.mark.asyncio
     async def test_processing_with_custom_options(self):
@@ -161,7 +166,8 @@ class TestImageProcessor:
 
         result = await self.processor.process(image, options)
 
-        assert isinstance(result, Image.Image)
+        assert isinstance(result, ProcessedImage)
+        assert result.width > 0 and result.height > 0
 
     @pytest.mark.asyncio
     async def test_analyze_quality(self):
@@ -259,7 +265,15 @@ class TestImageProcessor:
         assert "minimal" in versions
         assert "standard" in versions
         assert "aggressive" in versions
-        assert all(isinstance(img, Image.Image) for img in versions.values())
+        assert all(isinstance(img, ProcessedImage) for img in versions.values())
+
+        # Check that all versions have valid ProcessedImage fields
+        for _version_name, processed_img in versions.items():
+            assert processed_img.width > 0
+            assert processed_img.height > 0
+            assert processed_img.dpi > 0
+            assert len(processed_img.image_data) > 0
+            assert processed_img.format in ["png", "jpeg"]
 
     @pytest.mark.asyncio
     async def test_auto_rotate_no_rotation_needed(self):

@@ -6,6 +6,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 from pydantic import BaseModel, Field
 
 from .exceptions import ImageProcessingError
+from .models import ProcessedImage
 
 
 class ImageQuality(BaseModel):
@@ -44,7 +45,7 @@ class ImageProcessor:
         self,
         image: Image.Image,
         options: ProcessingOptions | None = None,
-    ) -> Image.Image:
+    ) -> ProcessedImage:
         """
         Process image with full optimization pipeline.
 
@@ -53,7 +54,7 @@ class ImageProcessor:
             options: Processing configuration options
 
         Returns:
-            Optimized PIL Image for OCR
+            ProcessedImage with optimized image data and metadata
 
         Raises:
             ImageProcessingError: If any processing step fails
@@ -80,7 +81,8 @@ class ImageProcessor:
             # Step 6: Final optimization
             processed = await self._finalize_processing(processed, processing_options)
 
-            return processed
+            # Convert to ProcessedImage with metadata
+            return await self._create_processed_image(processed, processing_options, quality)
 
         except Exception as e:
             if isinstance(e, ImageProcessingError):
@@ -168,7 +170,8 @@ class ImageProcessor:
             if lines is not None and len(lines) > 0:
                 # Calculate dominant angle
                 angles = []
-                for _rho, theta in lines[:50]:  # Use top 50 lines
+                for line in lines[:50]:  # Use top 50 lines
+                    _rho, theta = line[0]  # OpenCV returns array of arrays
                     angle = theta * 180 / np.pi
                     # Convert to rotation angle
                     if angle < 45:
@@ -284,6 +287,9 @@ class ImageProcessor:
     def _estimate_text_density(self, img_array: np.ndarray) -> float:
         """Rough estimation of text density in image."""
         # Use edge density as proxy for text density
+        # Convert to uint8 if necessary
+        if img_array.dtype != np.uint8:
+            img_array = img_array.astype(np.uint8)
         edges = cv2.Canny(img_array, 50, 150)
         edge_density = np.count_nonzero(edges) / edges.size
         return min(edge_density * 5, 1.0)  # Scale and clamp to 0-1
@@ -360,12 +366,47 @@ class ImageProcessor:
 
         return Image.fromarray(binary)
 
-    async def create_multiple_versions(self, image: Image.Image) -> dict[str, Image.Image]:
+    async def _create_processed_image(
+        self,
+        image: Image.Image,
+        options: ProcessingOptions,
+        quality: ImageQuality
+    ) -> ProcessedImage:
+        """Create ProcessedImage object with metadata."""
+        import io
+
+        # Convert image to bytes
+        buffer = io.BytesIO()
+        image_format = "PNG" if image.mode in ("RGBA", "LA") else "JPEG"
+        image.save(buffer, format=image_format, quality=95 if image_format == "JPEG" else None)
+        image_data = buffer.getvalue()
+
+        # Track preprocessing steps
+        preprocessing_applied = []
+        if options.auto_rotate:
+            preprocessing_applied.append("rotation_correction")
+        if options.enhance_contrast:
+            preprocessing_applied.append("contrast_enhancement")
+        if options.remove_noise:
+            preprocessing_applied.append("noise_removal")
+        if options.binarize:
+            preprocessing_applied.append("adaptive_threshold")
+
+        return ProcessedImage(
+            image_data=image_data,
+            format=image_format.lower(),
+            width=image.width,
+            height=image.height,
+            dpi=quality.resolution_dpi,
+            preprocessing_applied=preprocessing_applied
+        )
+
+    async def create_multiple_versions(self, image: Image.Image) -> dict[str, ProcessedImage]:
         """
         Create multiple processed versions for different OCR engines.
 
         Returns:
-            Dictionary mapping version name to processed image
+            Dictionary mapping version name to ProcessedImage object
         """
         versions = {}
 
