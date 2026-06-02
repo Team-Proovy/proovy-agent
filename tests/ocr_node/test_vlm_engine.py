@@ -25,7 +25,9 @@ def vlm_engine() -> VLMEngine:
 def sample_processed_image() -> ProcessedImage:
     """샘플 처리된 이미지."""
     # 1x1 PNG 이미지 데이터 (base64)
-    png_data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    png_data = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
 
     return ProcessedImage(
         image_data=png_data,
@@ -33,7 +35,7 @@ def sample_processed_image() -> ProcessedImage:
         width=100,
         height=100,
         dpi=300,
-        preprocessing_applied=["contrast_enhancement", "adaptive_threshold"]
+        preprocessing_applied=["contrast_enhancement", "adaptive_threshold"],
     )
 
 
@@ -47,7 +49,7 @@ def default_options() -> OCROptions:
         enable_math_mode=True,
         enable_command_parsing=True,
         quality_threshold=0.7,
-        max_processing_time=30.0
+        max_processing_time=30.0,
     )
 
 
@@ -94,9 +96,7 @@ class TestVLMEngine:
         """프롬프트 옵션별 생성 테스트."""
         # 수학 모드만 활성화
         options_math = OCROptions(
-            enable_math_mode=True,
-            enable_command_parsing=False,
-            target_language="ko"
+            enable_math_mode=True, enable_command_parsing=False, target_language="ko"
         )
         prompt = vlm_engine._build_prompt(options_math)
         assert "mathematical expressions" in prompt
@@ -105,9 +105,7 @@ class TestVLMEngine:
 
         # 커맨드 모드만 활성화
         options_command = OCROptions(
-            enable_math_mode=False,
-            enable_command_parsing=True,
-            target_language="en"
+            enable_math_mode=False, enable_command_parsing=True, target_language="en"
         )
         prompt = vlm_engine._build_prompt(options_command)
         # 수학 모드 비활성화 시에는 수학 관련 추가 프롬프트만 없어야 함
@@ -121,12 +119,16 @@ class TestVLMEngine:
 class TestConfidenceCalculation:
     """신뢰도 계산 테스트."""
 
-    def test_empty_text_confidence(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage) -> None:
+    def test_empty_text_confidence(
+        self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage
+    ) -> None:
         """빈 텍스트 신뢰도."""
         assert vlm_engine._calculate_confidence("", sample_processed_image) == 0.0
         assert vlm_engine._calculate_confidence("   ", sample_processed_image) == 0.0
 
-    def test_text_length_confidence(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage) -> None:
+    def test_text_length_confidence(
+        self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage
+    ) -> None:
         """텍스트 길이별 신뢰도."""
         short_text = "Hi"
         medium_text = "This is a medium length text for testing OCR confidence calculation."
@@ -149,7 +151,7 @@ class TestConfidenceCalculation:
             width=100,
             height=100,
             dpi=400,
-            preprocessing_applied=[]
+            preprocessing_applied=[],
         )
 
         # 저해상도 이미지
@@ -159,7 +161,7 @@ class TestConfidenceCalculation:
             width=100,
             height=100,
             dpi=150,
-            preprocessing_applied=[]
+            preprocessing_applied=[],
         )
 
         high_conf = vlm_engine._calculate_confidence(text, high_dpi_image)
@@ -178,7 +180,7 @@ class TestConfidenceCalculation:
             width=100,
             height=100,
             dpi=300,
-            preprocessing_applied=["contrast_enhancement", "adaptive_threshold", "noise_removal"]
+            preprocessing_applied=["contrast_enhancement", "adaptive_threshold", "noise_removal"],
         )
 
         # 전처리 없는 이미지
@@ -188,7 +190,7 @@ class TestConfidenceCalculation:
             width=100,
             height=100,
             dpi=300,
-            preprocessing_applied=[]
+            preprocessing_applied=[],
         )
 
         processed_conf = vlm_engine._calculate_confidence(text, processed_image)
@@ -196,7 +198,9 @@ class TestConfidenceCalculation:
 
         assert processed_conf > raw_conf
 
-    def test_korean_english_mixed_confidence(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage) -> None:
+    def test_korean_english_mixed_confidence(
+        self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage
+    ) -> None:
         """한영 혼재 텍스트 신뢰도."""
         korean_only = "안녕하세요 한국어 텍스트입니다"
         english_only = "Hello this is English text"
@@ -210,7 +214,9 @@ class TestConfidenceCalculation:
         assert mixed_conf >= korean_conf
         assert mixed_conf >= english_conf
 
-    def test_math_symbols_confidence(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage) -> None:
+    def test_math_symbols_confidence(
+        self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage
+    ) -> None:
         """수학 기호 포함 신뢰도."""
         text_with_math = "수학 공식: ∫₀¹ f(x)dx = √(a²+b²) ≤ ∞"
         text_without_math = "일반 텍스트입니다"
@@ -221,13 +227,17 @@ class TestConfidenceCalculation:
         # 적절한 수학 기호는 보너스
         assert math_conf > normal_conf
 
-    def test_command_pattern_confidence(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage) -> None:
+    def test_command_pattern_confidence(
+        self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage
+    ) -> None:
         """@커맨드 패턴 신뢰도."""
         text_with_commands = "@solve this equation @explain the result"
         text_without_commands = "solve this equation explain the result"
 
         command_conf = vlm_engine._calculate_confidence(text_with_commands, sample_processed_image)
-        normal_conf = vlm_engine._calculate_confidence(text_without_commands, sample_processed_image)
+        normal_conf = vlm_engine._calculate_confidence(
+            text_without_commands, sample_processed_image
+        )
 
         # @커맨드가 인식되면 보너스
         assert command_conf > normal_conf
@@ -278,164 +288,189 @@ class TestGeminiProcessing:
     """Gemini API 처리 테스트."""
 
     @pytest.mark.asyncio
-    async def test_missing_api_key(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_missing_api_key(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """API 키 누락 테스트."""
         with (
-            patch.dict('os.environ', {}, clear=True),
-            pytest.raises(VLMProcessingError, match="API 키가 설정되지 않았습니다")
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(VLMProcessingError, match="API 키가 설정되지 않았습니다"),
         ):
-                await vlm_engine._process_with_gemini(
-                    sample_processed_image,
-                    default_options,
-                    vlm_engine.model_configs["flash"]
-                )
+            await vlm_engine._process_with_gemini(
+                sample_processed_image, default_options, vlm_engine.model_configs["flash"]
+            )
 
     @pytest.mark.asyncio
-    async def test_successful_gemini_response(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_successful_gemini_response(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """성공적인 Gemini 응답 테스트."""
         mock_response_data = {
-            "candidates": [{
-                "content": {
-                    "parts": [{"text": "Extracted text from image"}]
-                },
-                "finishReason": "STOP"
-            }],
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Extracted text from image"}]},
+                    "finishReason": "STOP",
+                }
+            ],
             "usageMetadata": {
                 "promptTokenCount": 100,
                 "candidatesTokenCount": 20,
-                "totalTokenCount": 120
-            }
+                "totalTokenCount": 120,
+            },
         }
 
         with (
-            patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'}),
-            patch('aiohttp.ClientSession.post') as mock_post
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+            patch("aiohttp.ClientSession.post") as mock_post,
         ):
-                mock_response = AsyncMock()
-                mock_response.status = 200
-                mock_response.json.return_value = mock_response_data
-                mock_post.return_value.__aenter__.return_value = mock_response
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value.__aenter__.return_value = mock_response
 
-                result = await vlm_engine._process_with_gemini(
-                    sample_processed_image,
-                    default_options,
-                    vlm_engine.model_configs["flash"]
-                )
+            result = await vlm_engine._process_with_gemini(
+                sample_processed_image, default_options, vlm_engine.model_configs["flash"]
+            )
 
-                assert isinstance(result, VLMResult)
-                assert result.raw_text == "Extracted text from image"
-                assert result.model_name == "gemini-2.0-flash-exp"
-                assert result.token_usage["total"] == 120
-                assert 0.0 <= result.confidence <= 1.0
+            assert isinstance(result, VLMResult)
+            assert result.raw_text == "Extracted text from image"
+            assert result.model_name == "gemini-2.0-flash-exp"
+            assert result.token_usage["total"] == 120
+            assert 0.0 <= result.confidence <= 1.0
 
     @pytest.mark.asyncio
-    async def test_gemini_api_error(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_gemini_api_error(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """Gemini API 오류 테스트."""
         with (
-            patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'}),
-            patch('aiohttp.ClientSession.post') as mock_post
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+            patch("aiohttp.ClientSession.post") as mock_post,
         ):
-                mock_response = AsyncMock()
-                mock_response.status = 429  # Rate limit
-                mock_response.text.return_value = "Rate limit exceeded"
-                mock_post.return_value.__aenter__.return_value = mock_response
+            mock_response = AsyncMock()
+            mock_response.status = 429  # Rate limit
+            mock_response.text.return_value = "Rate limit exceeded"
+            mock_post.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(VLMProcessingError) as exc_info:
-                    await vlm_engine._process_with_gemini(
-                        sample_processed_image,
-                        default_options,
-                        vlm_engine.model_configs["flash"]
-                    )
+            with pytest.raises(VLMProcessingError) as exc_info:
+                await vlm_engine._process_with_gemini(
+                    sample_processed_image, default_options, vlm_engine.model_configs["flash"]
+                )
 
-                assert exc_info.value.is_recoverable is True  # 429는 복구 가능
-                assert "429" in str(exc_info.value)
+            assert exc_info.value.is_recoverable is True  # 429는 복구 가능
+            assert "429" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_gemini_safety_filter(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_gemini_safety_filter(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """Gemini 안전성 필터 테스트."""
         mock_response_data = {
-            "candidates": [{
-                "finishReason": "SAFETY",
-                "safetyRatings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "probability": "HIGH"}]
-            }]
+            "candidates": [
+                {
+                    "finishReason": "SAFETY",
+                    "safetyRatings": [
+                        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "probability": "HIGH"}
+                    ],
+                }
+            ]
         }
 
         with (
-            patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'}),
-            patch('aiohttp.ClientSession.post') as mock_post
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+            patch("aiohttp.ClientSession.post") as mock_post,
         ):
-                mock_response = AsyncMock()
-                mock_response.status = 200
-                mock_response.json.return_value = mock_response_data
-                mock_post.return_value.__aenter__.return_value = mock_response
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(VLMProcessingError) as exc_info:
-                    await vlm_engine._process_with_gemini(
-                        sample_processed_image,
-                        default_options,
-                        vlm_engine.model_configs["flash"]
-                    )
+            with pytest.raises(VLMProcessingError) as exc_info:
+                await vlm_engine._process_with_gemini(
+                    sample_processed_image, default_options, vlm_engine.model_configs["flash"]
+                )
 
-                assert "안전성 필터" in str(exc_info.value)
-                assert exc_info.value.is_recoverable is True
+            assert "안전성 필터" in str(exc_info.value)
+            assert exc_info.value.is_recoverable is True
 
     @pytest.mark.asyncio
-    async def test_gemini_empty_response(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_gemini_empty_response(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """Gemini 빈 응답 테스트."""
-        mock_response_data = {
-            "candidates": [{
-                "content": {
-                    "parts": [{"text": ""}]
-                }
-            }]
-        }
+        mock_response_data = {"candidates": [{"content": {"parts": [{"text": ""}]}}]}
 
         with (
-            patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'}),
-            patch('aiohttp.ClientSession.post') as mock_post
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+            patch("aiohttp.ClientSession.post") as mock_post,
         ):
-                mock_response = AsyncMock()
-                mock_response.status = 200
-                mock_response.json.return_value = mock_response_data
-                mock_post.return_value.__aenter__.return_value = mock_response
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(VLMProcessingError, match="빈 텍스트를 반환했습니다"):
-                    await vlm_engine._process_with_gemini(
-                        sample_processed_image,
-                        default_options,
-                        vlm_engine.model_configs["flash"]
-                    )
+            with pytest.raises(VLMProcessingError, match="빈 텍스트를 반환했습니다"):
+                await vlm_engine._process_with_gemini(
+                    sample_processed_image, default_options, vlm_engine.model_configs["flash"]
+                )
 
 
 class TestProcessImage:
     """이미지 처리 통합 테스트."""
 
     @pytest.mark.asyncio
-    async def test_successful_processing(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_successful_processing(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """성공적인 이미지 처리."""
         mock_result = VLMResult(
             model_name="gemini-2.0-flash-exp",
             raw_text="Test extracted text",
             confidence=0.8,
             processing_time=1.5,
-            token_usage={"input": 100, "output": 20, "total": 120}
+            token_usage={"input": 100, "output": 20, "total": 120},
         )
 
-        with patch.object(vlm_engine, '_process_with_model', return_value=mock_result) as mock_process:
+        with patch.object(
+            vlm_engine, "_process_with_model", return_value=mock_result
+        ) as mock_process:
             result = await vlm_engine.process_image(sample_processed_image, default_options)
 
             assert result == mock_result
             mock_process.assert_called_once_with(sample_processed_image, default_options, "flash")
 
     @pytest.mark.asyncio
-    async def test_quality_threshold_fallback(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_quality_threshold_fallback(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """품질 기준 미달 시 폴백 테스트."""
         low_quality_result = VLMResult(
             model_name="gemini-2.0-flash-exp",
             raw_text="Low quality text",
             confidence=0.5,  # 기준(0.7) 미달
             processing_time=1.0,
-            token_usage={}
+            token_usage={},
         )
 
         high_quality_result = VLMResult(
@@ -443,10 +478,10 @@ class TestProcessImage:
             raw_text="High quality text",
             confidence=0.9,
             processing_time=2.0,
-            token_usage={}
+            token_usage={},
         )
 
-        with patch.object(vlm_engine, '_process_with_model') as mock_process:
+        with patch.object(vlm_engine, "_process_with_model") as mock_process:
             mock_process.side_effect = [low_quality_result, high_quality_result]
 
             result = await vlm_engine.process_image(sample_processed_image, default_options)
@@ -455,14 +490,19 @@ class TestProcessImage:
             assert mock_process.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_timeout_error(self, vlm_engine: VLMEngine, sample_processed_image: ProcessedImage, default_options: OCROptions) -> None:
+    async def test_timeout_error(
+        self,
+        vlm_engine: VLMEngine,
+        sample_processed_image: ProcessedImage,
+        default_options: OCROptions,
+    ) -> None:
         """타임아웃 오류 테스트."""
         short_timeout_options = OCROptions(
             primary_model="flash",
-            max_processing_time=0.001  # 매우 짧은 타임아웃
+            max_processing_time=0.001,  # 매우 짧은 타임아웃
         )
 
-        with patch.object(vlm_engine, '_process_with_gemini') as mock_gemini:
+        with patch.object(vlm_engine, "_process_with_gemini") as mock_gemini:
             # 긴 지연 시뮬레이션
             async def slow_process(*args, **kwargs):
                 await asyncio.sleep(1)
@@ -471,16 +511,14 @@ class TestProcessImage:
                     raw_text="text",
                     confidence=0.8,
                     processing_time=1.0,
-                    token_usage={}
+                    token_usage={},
                 )
 
             mock_gemini.side_effect = slow_process
 
             with pytest.raises(OCRTimeoutError):
                 await vlm_engine._process_with_model(
-                    sample_processed_image,
-                    short_timeout_options,
-                    "flash"
+                    sample_processed_image, short_timeout_options, "flash"
                 )
 
 
@@ -488,7 +526,9 @@ class TestBatchProcessing:
     """배치 처리 테스트."""
 
     @pytest.mark.asyncio
-    async def test_batch_processing_success(self, vlm_engine: VLMEngine, default_options: OCROptions) -> None:
+    async def test_batch_processing_success(
+        self, vlm_engine: VLMEngine, default_options: OCROptions
+    ) -> None:
         """성공적인 배치 처리."""
         # 테스트용 이미지 3개
         images = [
@@ -498,7 +538,7 @@ class TestBatchProcessing:
                 width=100,
                 height=100,
                 dpi=300,
-                preprocessing_applied=[]
+                preprocessing_applied=[],
             ),
             ProcessedImage(
                 image_data=b"dummy2",
@@ -506,7 +546,7 @@ class TestBatchProcessing:
                 width=100,
                 height=100,
                 dpi=300,
-                preprocessing_applied=[]
+                preprocessing_applied=[],
             ),
             ProcessedImage(
                 image_data=b"dummy3",
@@ -514,22 +554,22 @@ class TestBatchProcessing:
                 width=100,
                 height=100,
                 dpi=300,
-                preprocessing_applied=[]
-            )
+                preprocessing_applied=[],
+            ),
         ]
 
         mock_results = [
             VLMResult(
                 model_name="gemini-2.0-flash-exp",
-                raw_text=f"Text from image {i+1}",
+                raw_text=f"Text from image {i + 1}",
                 confidence=0.8,
                 processing_time=1.0,
-                token_usage={}
+                token_usage={},
             )
             for i in range(3)
         ]
 
-        with patch.object(vlm_engine, 'process_image') as mock_process:
+        with patch.object(vlm_engine, "process_image") as mock_process:
             mock_process.side_effect = mock_results
 
             results = await vlm_engine.process_batch(images, default_options)
@@ -539,7 +579,9 @@ class TestBatchProcessing:
             assert mock_process.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_batch_processing_with_failures(self, vlm_engine: VLMEngine, default_options: OCROptions) -> None:
+    async def test_batch_processing_with_failures(
+        self, vlm_engine: VLMEngine, default_options: OCROptions
+    ) -> None:
         """일부 실패가 포함된 배치 처리."""
         images = [
             ProcessedImage(
@@ -548,7 +590,7 @@ class TestBatchProcessing:
                 width=100,
                 height=100,
                 dpi=300,
-                preprocessing_applied=[]
+                preprocessing_applied=[],
             ),
             ProcessedImage(
                 image_data=b"dummy2",
@@ -556,8 +598,8 @@ class TestBatchProcessing:
                 width=100,
                 height=100,
                 dpi=300,
-                preprocessing_applied=[]
-            )
+                preprocessing_applied=[],
+            ),
         ]
 
         success_result = VLMResult(
@@ -565,10 +607,10 @@ class TestBatchProcessing:
             raw_text="Success text",
             confidence=0.8,
             processing_time=1.0,
-            token_usage={}
+            token_usage={},
         )
 
-        with patch.object(vlm_engine, 'process_image') as mock_process:
+        with patch.object(vlm_engine, "process_image") as mock_process:
             mock_process.side_effect = [success_result, VLMProcessingError("flash", "API Error")]
 
             results = await vlm_engine.process_batch(images, default_options)
@@ -578,4 +620,3 @@ class TestBatchProcessing:
             # 실패한 경우 기본 VLMResult 반환
             assert results[1].model_name == "failed"
             assert results[1].confidence == 0.0
-

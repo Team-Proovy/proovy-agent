@@ -50,9 +50,7 @@ class VLMProcessingError(OCRError):
 
     def __str__(self) -> str:
         base_msg = super().__str__()
-        recovery_msg = (
-            "폴백 모델 사용 가능" if self.is_recoverable else "폴백 불가능"
-        )
+        recovery_msg = "폴백 모델 사용 가능" if self.is_recoverable else "폴백 불가능"
         return f"{base_msg} (모델: {self.model_name}, {recovery_msg})"
 
 

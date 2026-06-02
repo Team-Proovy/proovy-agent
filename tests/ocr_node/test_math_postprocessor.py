@@ -12,10 +12,7 @@ class TestMathPattern:
     def test_pattern_creation(self) -> None:
         """패턴 생성 테스트."""
         pattern = MathPattern(
-            pattern=r"×",
-            replacement=r"\\times",
-            priority=1,
-            description="곱하기 기호"
+            pattern=r"×", replacement=r"\\times", priority=1, description="곱하기 기호"
         )
 
         assert pattern.pattern == r"×"
@@ -171,11 +168,11 @@ class TestAdvancedMathSymbols:
             ("σ² = 4", "\\sigma ^{2} = 4"),
         ]
 
-        for original, _expected_latex in test_cases:
+        for original, expected_latex in test_cases:
             results = processor.process_text(original)
             assert len(results) == 1
-            # 그리스 문자가 포함된지 확인
-            assert any(greek in results[0].latex for greek in ['\\alpha', '\\beta', '\\gamma', '\\pi', '\\theta', '\\lambda', '\\mu', '\\sigma'])
+            # 예상 LaTeX 검증
+            assert expected_latex in results[0].latex or results[0].latex == expected_latex
 
     def test_set_theory(self, processor: MathPostProcessor) -> None:
         """집합론 기호 변환."""
@@ -189,10 +186,11 @@ class TestAdvancedMathSymbols:
             ("∅", "\\emptyset"),
         ]
 
-        for original, _expected_latex in test_cases:
+        for original, expected_latex in test_cases:
             results = processor.process_text(original)
             assert len(results) == 1
-            assert any(symbol in results[0].latex for symbol in ['\\in', '\\notin', '\\subset', '\\subseteq', '\\cup', '\\cap', '\\emptyset'])
+            # 예상 LaTeX 검증
+            assert expected_latex in results[0].latex or results[0].latex == expected_latex
 
     def test_calculus_symbols(self, processor: MathPostProcessor) -> None:
         """미적분 기호 변환."""
@@ -202,11 +200,11 @@ class TestAdvancedMathSymbols:
             ("lim x→∞", "\\lim x→\\infty"),
         ]
 
-        for original, _expected_latex in test_cases:
+        for original, expected_latex in test_cases:
             results = processor.process_text(original)
             assert len(results) == 1
-            # 미적분 기호 확인
-            assert any(symbol in results[0].latex for symbol in ['\\partial', '\\nabla', '\\lim', '\\infty'])
+            # 예상 LaTeX 검증
+            assert expected_latex in results[0].latex or results[0].latex == expected_latex
 
 
 class TestKoreanMathTerms:
@@ -228,11 +226,11 @@ class TestKoreanMathTerms:
 
         for original, _expected_content in test_cases:
             results = processor.process_text(original)
-            if results:  # 한국어 용어가 감지된 경우
-                assert len(results) >= 1
-                # 변환된 내용이 포함되어 있는지 확인
-                converted_text = results[0].latex
-                assert any(op in converted_text for op in ['+', '-', '\\times', '\\div'])
+            # 한국어 용어가 반드시 감지되어야 함
+            assert len(results) >= 1, f"한국어 수학 용어 '{original}'가 감지되지 않음"
+            # 변환된 내용이 포함되어 있는지 확인
+            converted_text = results[0].latex
+            assert any(op in converted_text for op in ["+", "-", "\\times", "\\div"])
 
     def test_korean_functions(self, processor: MathPostProcessor) -> None:
         """한국어 함수 용어 변환."""
@@ -245,8 +243,9 @@ class TestKoreanMathTerms:
 
         for original, expected_symbol in test_cases:
             results = processor.process_text(original)
-            if results:
-                assert any(expected_symbol in result.latex for result in results)
+            # 한국어 함수 용어가 반드시 감지되어야 함
+            assert len(results) >= 1, f"한국어 함수 용어 '{original}'가 감지되지 않음"
+            assert any(expected_symbol in result.latex for result in results)
 
     def test_korean_powers(self, processor: MathPostProcessor) -> None:
         """한국어 거듭제곱 용어 변환."""
@@ -257,8 +256,9 @@ class TestKoreanMathTerms:
 
         for original, expected_power in test_cases:
             results = processor.process_text(original)
-            if results:
-                assert any(expected_power in result.latex for result in results)
+            # 한국어 거듭제곱 용어가 반드시 감지되어야 함
+            assert len(results) >= 1, f"한국어 거듭제곱 용어 '{original}'가 감지되지 않음"
+            assert any(expected_power in result.latex for result in results)
 
 
 class TestComplexExpressions:
@@ -307,7 +307,7 @@ class TestComplexExpressions:
         assert len(results) >= 1
         latex = results[0].latex
         # 삼각함수와 그리스 문자가 변환되었는지 확인
-        assert any(func in latex for func in ['sin', 'cos'])
+        assert any(func in latex for func in ["sin", "cos"])
         assert "\\theta" in latex or "θ" in latex
 
 
@@ -369,15 +369,11 @@ class TestConfidenceCalculation:
         complex_expr = MathExpression(
             latex="\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}",
             original="∫₀∞ e^(-x²) dx = √π/2",
-            position=(0, 20)
+            position=(0, 20),
         )
 
         # 간단한 표현식 (낮은 신뢰도)
-        simple_expr = MathExpression(
-            latex="x^{2}",
-            original="x²",
-            position=(0, 2)
-        )
+        simple_expr = MathExpression(latex="x^{2}", original="x²", position=(0, 2))
 
         complex_confidence = processor.extract_math_confidence(complex_expr)
         simple_confidence = processor.extract_math_confidence(simple_expr)
@@ -390,17 +386,11 @@ class TestConfidenceCalculation:
         """괄호 균형 신뢰도."""
         # 균형잡힌 괄호
         balanced_expr = MathExpression(
-            latex="\\frac{(a+b)}{(c+d)}",
-            original="(a+b)/(c+d)",
-            position=(0, 11)
+            latex="\\frac{(a+b)}{(c+d)}", original="(a+b)/(c+d)", position=(0, 11)
         )
 
         # 불균형 괄호
-        unbalanced_expr = MathExpression(
-            latex="(a+b/c+d",
-            original="(a+b/c+d",
-            position=(0, 8)
-        )
+        unbalanced_expr = MathExpression(latex="(a+b/c+d", original="(a+b/c+d", position=(0, 8))
 
         balanced_conf = processor.extract_math_confidence(balanced_expr)
         unbalanced_conf = processor.extract_math_confidence(unbalanced_expr)
@@ -493,7 +483,9 @@ class TestIntegration:
 
         # 한국어 용어와 수학 기호가 모두 처리되었는지 확인
         all_latex = " ".join(result.latex for result in results)
-        has_math_symbols = any(symbol in all_latex for symbol in ['sin', 'cos', 'tan', '\\theta', '^{2}'])
+        has_math_symbols = any(
+            symbol in all_latex for symbol in ["sin", "cos", "tan", "\\theta", "^{2}"]
+        )
 
         if has_math_symbols:
             assert True  # 한국어 수학 용어가 올바르게 변환됨
