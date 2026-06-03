@@ -48,9 +48,9 @@ class CommandParser:
             r"@영어\s+([가-힣a-zA-Z0-9]+(?:\s+[가-힣a-zA-Z0-9]+)*)": self._create_term_tag,  # 오타 허용
 
             # 해설영상 커맨드
-            r"@해설영상\s*(.*)": self._create_video_tag,
-            r"@해설동영상\s*(.*)": self._create_video_tag,  # 변형 허용
-            r"@영상\s*(.*)": self._create_video_tag,
+            r"@해설영상\s*([^@]*)": self._create_video_tag,
+            r"@해설동영상\s*([^@]*)": self._create_video_tag,  # 변형 허용
+            r"@영상\s*([^@]*)": self._create_video_tag,
 
             # 해설지 생성 커맨드
             r"@해설지\s*생성": self._create_pdf_tag,
@@ -73,37 +73,41 @@ class CommandParser:
         """자연어 의도 분석을 위한 키워드 정의"""
         self.intent_keywords = {
             TagType.TERM: {
-                "keywords": ["뭐야", "무엇", "정의", "의미", "설명해", "알려줘", "이란"],
+                "keywords": ["정의", "의미"],  # 범용 키워드 제거, 패턴 매칭에 의존
                 "patterns": [
                     r"([가-힣a-zA-Z0-9]+)이?가?\s*뭐야",
                     r"([가-힣a-zA-Z0-9]+)이?란?\s*무엇",
                     r"([가-힣a-zA-Z0-9]+)의?\s*의미",
                     r"([가-힣a-zA-Z0-9]+)을?\s*설명해",
-                    r"([가-힣a-zA-Z0-9]+)에?\s*대해\s*알려줘"
+                    r"([가-힣a-zA-Z0-9]+)에?\s*대해\s*알려줘",
+                    r"([가-힣a-zA-Z0-9]+)의?\s*정의"
                 ]
             },
             TagType.VIDEO: {
-                "keywords": ["영상", "동영상", "해설영상", "설명영상", "비디오", "만들어", "보여줘"],
+                "keywords": ["영상", "동영상", "해설영상", "설명영상", "비디오"],  # 범용 동사 제거
                 "patterns": [
                     r"영상으?로?\s*(만들어|보여줘|설명해)",
                     r"(해설영상|동영상)\s*(만들어|생성해)",
-                    r"비디오로?\s*설명해"
+                    r"비디오로?\s*설명해",
+                    r"(영상|동영상|비디오)\s*(제작|생성)"
                 ]
             },
             TagType.PDF: {
-                "keywords": ["해설지", "PDF", "파일", "저장", "다운로드", "문서"],
+                "keywords": ["해설지", "PDF"],  # 범용 키워드 제거
                 "patterns": [
                     r"PDF로?\s*(저장|만들어|생성)",
                     r"해설지\s*(만들어|생성|저장)",
-                    r"파일로?\s*(저장|다운로드)"
+                    r"파일로?\s*(저장|다운로드)",
+                    r"(문서|파일)\s*형태로?\s*(저장|생성)"
                 ]
             },
             TagType.SOLVE: {
-                "keywords": ["풀어", "해결", "계산", "답", "풀이", "과정"],
+                "keywords": ["풀이"],  # 범용 키워드 제거
                 "patterns": [
                     r"문제를?\s*(풀어|해결해)",
                     r"(풀이|해결)\s*과정",
-                    r"단계별로?\s*(풀어|해결)"
+                    r"단계별로?\s*(풀어|해결)",
+                    r"이\s*문제를?\s*(계산|해결)"
                 ]
             }
         }
@@ -150,7 +154,12 @@ class CommandParser:
                     tags.extend(new_tags)
                     detected_patterns.append(f"@command: {match.group(0)}")
                     confidence += 0.3  # 명시적 커맨드는 높은 신뢰도
+                except (AttributeError, IndexError):
+                    # 정규식 그룹 접근 오류만 무시
+                    continue
                 except Exception:
+                    # 예상치 못한 오류는 로깅하고 계속 진행
+                    # 실제 운영에서는 logger.warning(f"Command parsing error: {e}")
                     continue
 
         return ParsedCommand(
@@ -179,7 +188,12 @@ class CommandParser:
 
                         detected_patterns.append(f"intent: {match.group(0)}")
                         confidence += 0.2  # 자연어는 중간 신뢰도
+                    except (AttributeError, IndexError):
+                        # 정규식 그룹 접근 오류만 무시
+                        continue
                     except Exception:
+                        # 예상치 못한 오류는 로깅하고 계속 진행
+                        # 실제 운영에서는 logger.warning(f"Intent parsing error: {e}")
                         continue
 
         # 키워드 기반 추가 분석
@@ -192,25 +206,27 @@ class CommandParser:
         )
 
     def _analyze_keywords(self, text: str, current_tags: list[str]) -> float:
-        """키워드 기반 의도 분석"""
+        """키워드 기반 의도 분석 - 패턴 매칭이 있을 때만 보조적으로 사용"""
         confidence_boost = 0.0
         text_lower = text.lower()
 
-        for tag_type, data in self.intent_keywords.items():
-            keyword_count = sum(
-                1 for keyword in data["keywords"]
-                if keyword in text_lower
-            )
+        # 패턴 매칭이 있는 경우에만 키워드 분석 적용
+        has_pattern_match = len(current_tags) > 0
 
-            if keyword_count > 0:
-                # 아직 해당 태그가 없다면 추가
-                tag_exists = any(
-                    tag.startswith(tag_type.value) for tag in current_tags
+        if has_pattern_match:
+            for tag_type, data in self.intent_keywords.items():
+                keyword_count = sum(
+                    1 for keyword in data["keywords"]
+                    if keyword in text_lower
                 )
-                if not tag_exists:
-                    current_tags.append(tag_type.value)
 
-                confidence_boost += keyword_count * 0.1
+                if keyword_count > 0:
+                    # 패턴 매칭으로 이미 태그가 있는 경우에만 신뢰도 보정
+                    tag_exists = any(
+                        tag.startswith(tag_type.value) for tag in current_tags
+                    )
+                    if tag_exists:
+                        confidence_boost += keyword_count * 0.1
 
         return confidence_boost
 
@@ -246,6 +262,7 @@ class CommandParser:
         """태그 중복 제거 및 우선순위 적용"""
         seen = set()
         result = []
+        term_tags = []  # term: 태그들은 별도 관리 (다중 허용)
 
         # 명시적 커맨드 우선순위: @용어 > @영상 > @해설지 > @풀이
         priority_order = [TagType.TERM, TagType.VIDEO, TagType.PDF, TagType.SOLVE]
@@ -262,26 +279,33 @@ class CommandParser:
             if tag not in sorted_tags:
                 sorted_tags.append(tag)
 
-        # 중복 제거
+        # 중복 제거 (term: 태그는 다중 허용)
         for tag in sorted_tags:
-            base_tag = tag.split(':')[0]
-            if base_tag not in seen:
-                result.append(tag)
-                seen.add(base_tag)
+            if tag.startswith("term:"):
+                # term: 태그는 동일한 내용이 아닌 경우 다중 허용
+                if tag not in term_tags:
+                    term_tags.append(tag)
+                    result.append(tag)
+            else:
+                base_tag = tag.split(':')[0]
+                if base_tag not in seen:
+                    result.append(tag)
+                    seen.add(base_tag)
 
         return result
 
     def _extract_problem_number(self, text: str) -> str | None:
-        """문제 번호 추출"""
+        """문제 번호 추출 - 문맥이 있는 경우만 인식"""
         patterns = [
-            r"(\d+)번\s*문제",
-            r"문제\s*(\d+)번?",
-            r"(\d+)번",
-            r"#(\d+)"
+            r"(\d+)번\s*문제",     # "2번 문제"
+            r"문제\s*(\d+)번?",    # "문제 3번"
+            r"#(\d+)번?\s*문제",   # "#7번 문제"
+            r"#(\d+)",            # "#7"
+            # 단독 "(\d+)번" 패턴 제거 - 오탐 방지
         ]
 
         for pattern in patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1)
 
