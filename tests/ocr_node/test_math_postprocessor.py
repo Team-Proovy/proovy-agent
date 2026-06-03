@@ -487,5 +487,4 @@ class TestIntegration:
             symbol in all_latex for symbol in ["sin", "cos", "tan", "\\theta", "^{2}"]
         )
 
-        if has_math_symbols:
-            assert True  # 한국어 수학 용어가 올바르게 변환됨
+        assert has_math_symbols, "한국어 수학 용어가 LaTeX로 변환되지 않았습니다"
