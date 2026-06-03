@@ -292,7 +292,7 @@ class MathPostProcessor:
         # direction이 -1이면 왼쪽으로, 1이면 오른쪽으로 확장
         while 0 <= current_pos < len(text):
             char = text[current_pos]
-            # 공백은 한 개까지 허용하여 "a × b" 같은 표현을 하나로 처리  # ruff: noqa: RUF003
+            # 공백도 수학 표현의 일부로 포함하여 "a × b" 같은 표현을 하나로 처리  # ruff: noqa: RUF003
             if char in math_chars or ("가" <= char <= "힣") or char == " ":
                 current_pos += direction
             else:
