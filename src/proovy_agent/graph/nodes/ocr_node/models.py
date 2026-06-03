@@ -1,6 +1,5 @@
 """OCR 데이터 모델 및 Pydantic 스키마 - VLM 기반."""
 
-
 from pydantic import BaseModel, Field, field_validator
 
 

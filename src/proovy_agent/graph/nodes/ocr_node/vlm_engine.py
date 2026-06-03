@@ -95,7 +95,7 @@ COMMAND PARSING MODE ACTIVE:
                 system_prompt=base_system,
                 user_prompt_template=base_user,
                 math_mode_addition=math_addition,
-                command_mode_addition=command_addition
+                command_mode_addition=command_addition,
             )
         }
 
@@ -107,29 +107,23 @@ COMMAND PARSING MODE ACTIVE:
                 api_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
                 max_tokens=4096,
                 temperature=0.0,  # 정확성을 위해 0으로 설정
-                timeout_seconds=30.0
+                timeout_seconds=30.0,
             ),
             "gpt4o-mini": VLMConfig(
                 model_name="gpt-4o-mini",
                 api_endpoint="https://api.openai.com/v1/chat/completions",
                 max_tokens=4096,
                 temperature=0.0,
-                timeout_seconds=45.0
-            )
+                timeout_seconds=45.0,
+            ),
         }
 
-    async def process_image(
-        self,
-        image: ProcessedImage,
-        options: OCROptions
-    ) -> VLMResult:
+    async def process_image(self, image: ProcessedImage, options: OCROptions) -> VLMResult:
         """이미지를 VLM으로 처리."""
 
         # Primary 모델로 먼저 시도
         try:
-            result = await self._process_with_model(
-                image, options, options.primary_model
-            )
+            result = await self._process_with_model(image, options, options.primary_model)
 
             # 품질 검증
             if result.confidence >= options.quality_threshold:
@@ -146,7 +140,11 @@ COMMAND PARSING MODE ACTIVE:
                             return fallback_result
 
                         # 두 결과 중 더 좋은 것 선택
-                        return result if result.confidence > fallback_result.confidence else fallback_result
+                        return (
+                            result
+                            if result.confidence > fallback_result.confidence
+                            else fallback_result
+                        )
                     except Exception:
                         # 폴백 실패 시 기존 결과 유지
                         return result
@@ -156,7 +154,7 @@ COMMAND PARSING MODE ACTIVE:
                         raise QualityThresholdError(
                             options.quality_threshold,
                             result.confidence,
-                            "OCR 결과가 품질 기준에 미달합니다"
+                            "OCR 결과가 품질 기준에 미달합니다",
                         )
                     return result
 
@@ -167,9 +165,7 @@ COMMAND PARSING MODE ACTIVE:
             # 복구 가능한 오류 또는 타임아웃이면 폴백 시도
             if options.fallback_model and options.fallback_model != options.primary_model:
                 try:
-                    return await self._process_with_model(
-                        image, options, options.fallback_model
-                    )
+                    return await self._process_with_model(image, options, options.fallback_model)
                 except Exception as fallback_error:
                     # 폴백도 실패하면 원래 오류 재발생
                     raise e from fallback_error
@@ -177,10 +173,7 @@ COMMAND PARSING MODE ACTIVE:
                 raise
 
     async def _process_with_model(
-        self,
-        image: ProcessedImage,
-        options: OCROptions,
-        model_name: str
+        self, image: ProcessedImage, options: OCROptions, model_name: str
     ) -> VLMResult:
         """특정 모델로 이미지 처리."""
 
@@ -189,7 +182,7 @@ COMMAND PARSING MODE ACTIVE:
                 model_name,
                 f"지원하지 않는 모델: {model_name}",
                 {"available_models": list(self.model_configs.keys())},
-                is_recoverable=False
+                is_recoverable=False,
             )
 
         config = self.model_configs[model_name]
@@ -202,19 +195,15 @@ COMMAND PARSING MODE ACTIVE:
             # 모델별 처리
             if model_name == "flash":
                 result = await asyncio.wait_for(
-                    self._process_with_gemini(image, options, config),
-                    timeout=timeout
+                    self._process_with_gemini(image, options, config), timeout=timeout
                 )
             elif model_name == "gpt4o-mini":
                 result = await asyncio.wait_for(
-                    self._process_with_gpt4o(image, options, config),
-                    timeout=timeout
+                    self._process_with_gpt4o(image, options, config), timeout=timeout
                 )
             else:
                 raise VLMProcessingError(
-                    model_name,
-                    f"구현되지 않은 모델: {model_name}",
-                    is_recoverable=False
+                    model_name, f"구현되지 않은 모델: {model_name}", is_recoverable=False
                 )
 
             processing_time = time.time() - start_time
@@ -226,7 +215,7 @@ COMMAND PARSING MODE ACTIVE:
             raise OCRTimeoutError(
                 timeout,
                 f"{model_name} 모델 처리 시간 초과",
-                {"model": model_name, "timeout": timeout}
+                {"model": model_name, "timeout": timeout},
             ) from timeout_err
         except Exception as e:
             if isinstance(e, (VLMProcessingError, OCRTimeoutError)):
@@ -234,14 +223,11 @@ COMMAND PARSING MODE ACTIVE:
             raise VLMProcessingError(
                 model_name,
                 f"모델 처리 중 오류: {e!s}",
-                {"processing_time": time.time() - start_time}
+                {"processing_time": time.time() - start_time},
             ) from e
 
     async def _process_with_gemini(
-        self,
-        image: ProcessedImage,
-        options: OCROptions,
-        config: VLMConfig
+        self, image: ProcessedImage, options: OCROptions, config: VLMConfig
     ) -> VLMResult:
         """Gemini 2.0 Flash로 처리."""
 
@@ -253,22 +239,19 @@ COMMAND PARSING MODE ACTIVE:
 
         # API 요청 데이터
         request_data = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": f"image/{image.format}",
-                            "data": image_data
-                        }
-                    }
-                ]
-            }],
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": f"image/{image.format}", "data": image_data}},
+                    ]
+                }
+            ],
             "generationConfig": {
                 "maxOutputTokens": config.max_tokens,
                 "temperature": config.temperature,
-                "candidateCount": 1
-            }
+                "candidateCount": 1,
+            },
         }
 
         # API 키 가져오기
@@ -278,33 +261,31 @@ COMMAND PARSING MODE ACTIVE:
                 config.model_name,
                 "Gemini API 키가 설정되지 않았습니다",
                 {"env_vars": ["GEMINI_API_KEY", "GOOGLE_AI_API_KEY"]},
-                is_recoverable=False
+                is_recoverable=False,
             )
 
         # API 호출
         async with aiohttp.ClientSession() as session:
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": api_key
-            }
+            headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
 
             async with session.post(
-                config.api_endpoint,
-                json=request_data,
-                headers=headers
+                config.api_endpoint, json=request_data, headers=headers
             ) as response:
-
                 if response.status != 200:
                     error_text = await response.text()
 
                     # 특정 오류 코드에 따른 복구 가능성 판단
-                    is_recoverable = response.status in [429, 503, 502]  # Rate limit, service issues
+                    is_recoverable = response.status in [
+                        429,
+                        503,
+                        502,
+                    ]  # Rate limit, service issues
 
                     raise VLMProcessingError(
                         config.model_name,
                         f"Gemini API 오류: {response.status}",
                         {"status_code": response.status, "response": error_text},
-                        is_recoverable=is_recoverable
+                        is_recoverable=is_recoverable,
                     )
 
                 result_data = await response.json()
@@ -314,7 +295,7 @@ COMMAND PARSING MODE ACTIVE:
                     raise VLMProcessingError(
                         config.model_name,
                         "Gemini 응답에 후보가 없습니다",
-                        {"response": result_data}
+                        {"response": result_data},
                     )
 
                 candidate = result_data["candidates"][0]
@@ -325,21 +306,22 @@ COMMAND PARSING MODE ACTIVE:
                         raise VLMProcessingError(
                             config.model_name,
                             "Gemini 안전성 필터로 인한 처리 실패",
-                            {"finish_reason": candidate.get("finishReason"), "safety_ratings": candidate.get("safetyRatings")},
-                            is_recoverable=True  # 다른 이미지나 프롬프트로 재시도 가능
+                            {
+                                "finish_reason": candidate.get("finishReason"),
+                                "safety_ratings": candidate.get("safetyRatings"),
+                            },
+                            is_recoverable=True,  # 다른 이미지나 프롬프트로 재시도 가능
                         )
                     else:
                         raise VLMProcessingError(
-                            config.model_name,
-                            "Gemini 응답 형식 오류",
-                            {"candidate": candidate}
+                            config.model_name, "Gemini 응답 형식 오류", {"candidate": candidate}
                         )
 
                 if "parts" not in candidate["content"]:
                     raise VLMProcessingError(
                         config.model_name,
                         "Gemini 응답에 parts가 없습니다",
-                        {"content": candidate["content"]}
+                        {"content": candidate["content"]},
                     )
 
                 # 텍스트 추출
@@ -353,7 +335,7 @@ COMMAND PARSING MODE ACTIVE:
                         config.model_name,
                         "Gemini가 빈 텍스트를 반환했습니다",
                         {"candidate": candidate},
-                        is_recoverable=True
+                        is_recoverable=True,
                     )
 
                 # 신뢰도 계산
@@ -366,7 +348,7 @@ COMMAND PARSING MODE ACTIVE:
                     token_usage = {
                         "input": usage.get("promptTokenCount", 0),
                         "output": usage.get("candidatesTokenCount", 0),
-                        "total": usage.get("totalTokenCount", 0)
+                        "total": usage.get("totalTokenCount", 0),
                     }
 
                 return VLMResult(
@@ -374,14 +356,11 @@ COMMAND PARSING MODE ACTIVE:
                     raw_text=extracted_text.strip(),
                     confidence=confidence,
                     processing_time=0.0,  # 나중에 설정됨
-                    token_usage=token_usage
+                    token_usage=token_usage,
                 )
 
     async def _process_with_gpt4o(
-        self,
-        image: ProcessedImage,
-        options: OCROptions,
-        config: VLMConfig
+        self, image: ProcessedImage, options: OCROptions, config: VLMConfig
     ) -> VLMResult:
         """GPT-4o mini로 처리 (폴백용)."""
 
@@ -405,12 +384,12 @@ COMMAND PARSING MODE ACTIVE:
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/{image.format};base64,{image_data}",
-                                "detail": "high"
-                            }
-                        }
-                    ]
+                                "detail": "high",
+                            },
+                        },
+                    ],
                 }
-            ]
+            ],
         }
 
         # API 키 가져오기
@@ -420,22 +399,16 @@ COMMAND PARSING MODE ACTIVE:
                 config.model_name,
                 "OpenAI API 키가 설정되지 않았습니다",
                 {"env_vars": ["OPENAI_API_KEY"]},
-                is_recoverable=False
+                is_recoverable=False,
             )
 
         # API 호출
         async with aiohttp.ClientSession() as session:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
 
             async with session.post(
-                config.api_endpoint,
-                json=request_data,
-                headers=headers
+                config.api_endpoint, json=request_data, headers=headers
             ) as response:
-
                 if response.status != 200:
                     error_text = await response.text()
 
@@ -446,7 +419,7 @@ COMMAND PARSING MODE ACTIVE:
                         config.model_name,
                         f"OpenAI API 오류: {response.status}",
                         {"status_code": response.status, "response": error_text},
-                        is_recoverable=is_recoverable
+                        is_recoverable=is_recoverable,
                     )
 
                 result_data = await response.json()
@@ -456,15 +429,13 @@ COMMAND PARSING MODE ACTIVE:
                     raise VLMProcessingError(
                         config.model_name,
                         "OpenAI 응답에 choices가 없습니다",
-                        {"response": result_data}
+                        {"response": result_data},
                     )
 
                 choice = result_data["choices"][0]
                 if "message" not in choice or "content" not in choice["message"]:
                     raise VLMProcessingError(
-                        config.model_name,
-                        "OpenAI 응답 형식 오류",
-                        {"choice": choice}
+                        config.model_name, "OpenAI 응답 형식 오류", {"choice": choice}
                     )
 
                 extracted_text = choice["message"]["content"]
@@ -474,7 +445,7 @@ COMMAND PARSING MODE ACTIVE:
                         config.model_name,
                         "OpenAI가 빈 텍스트를 반환했습니다",
                         {"choice": choice},
-                        is_recoverable=True
+                        is_recoverable=True,
                     )
 
                 # 신뢰도 계산
@@ -487,7 +458,7 @@ COMMAND PARSING MODE ACTIVE:
                     token_usage = {
                         "input": usage.get("prompt_tokens", 0),
                         "output": usage.get("completion_tokens", 0),
-                        "total": usage.get("total_tokens", 0)
+                        "total": usage.get("total_tokens", 0),
                     }
 
                 return VLMResult(
@@ -495,7 +466,7 @@ COMMAND PARSING MODE ACTIVE:
                     raw_text=extracted_text.strip(),
                     confidence=confidence,
                     processing_time=0.0,
-                    token_usage=token_usage
+                    token_usage=token_usage,
                 )
 
     def _build_prompt(self, options: OCROptions) -> str:
@@ -504,9 +475,7 @@ COMMAND PARSING MODE ACTIVE:
 
         # 기본 프롬프트
         prompt = template.system_prompt + "\n\n"
-        prompt += template.user_prompt_template.format(
-            target_language=options.target_language
-        )
+        prompt += template.user_prompt_template.format(target_language=options.target_language)
 
         # 수학 모드 추가
         if options.enable_math_mode:
@@ -560,7 +529,7 @@ COMMAND PARSING MODE ACTIVE:
         confidence += min(preprocessing_bonus, 0.2)  # 최대 0.2 보너스
 
         # 한글/영어 혼재 패턴 분석
-        korean_chars = sum(1 for c in text if '\uac00' <= c <= '\ud7af')
+        korean_chars = sum(1 for c in text if "\uac00" <= c <= "\ud7af")
         english_chars = sum(1 for c in text if c.isascii() and c.isalpha())
         total_chars = korean_chars + english_chars
 
@@ -582,7 +551,8 @@ COMMAND PARSING MODE ACTIVE:
 
         # @ 커맨드 패턴 검증
         import re
-        command_pattern = r'@[a-zA-Z가-힣][a-zA-Z가-힣0-9_]*'
+
+        command_pattern = r"@[a-zA-Z가-힣][a-zA-Z가-힣0-9_]*"
         commands = re.findall(command_pattern, text)
         if commands:
             # @커맨드가 올바르게 인식되었으면 보너스
@@ -594,14 +564,15 @@ COMMAND PARSING MODE ACTIVE:
         """텍스트 언어 감지."""
         if not text or not text.strip():
             raise LanguageDetectionError(
-                "빈 텍스트로 인한 언어 감지 실패",
-                {"text_length": len(text)}
+                "빈 텍스트로 인한 언어 감지 실패", {"text_length": len(text)}
             )
 
         # 한글, 영어, 기타 문자 비율 계산
-        korean_chars = sum(1 for c in text if '\uac00' <= c <= '\ud7af')
+        korean_chars = sum(1 for c in text if "\uac00" <= c <= "\ud7af")
         english_chars = sum(1 for c in text if c.isascii() and c.isalpha())
-        other_chars = sum(1 for c in text if c.isalpha() and not ('\uac00' <= c <= '\ud7af') and not c.isascii())
+        other_chars = sum(
+            1 for c in text if c.isalpha() and not ("\uac00" <= c <= "\ud7af") and not c.isascii()
+        )
 
         total_alpha_chars = korean_chars + english_chars + other_chars
 
@@ -624,9 +595,7 @@ COMMAND PARSING MODE ACTIVE:
             return "ko" if korean_ratio > english_ratio else "en"
 
     async def process_batch(
-        self,
-        images: list[ProcessedImage],
-        options: OCROptions
+        self, images: list[ProcessedImage], options: OCROptions
     ) -> list[VLMResult]:
         """배치 처리 (병렬 처리로 성능 최적화)."""
 
@@ -635,13 +604,10 @@ COMMAND PARSING MODE ACTIVE:
         all_results = []
 
         for i in range(0, len(images), batch_size):
-            batch = images[i:i + batch_size]
+            batch = images[i : i + batch_size]
 
             # 배치 내 병렬 처리
-            tasks = [
-                self.process_image(image, options)
-                for image in batch
-            ]
+            tasks = [self.process_image(image, options) for image in batch]
 
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -655,7 +621,7 @@ COMMAND PARSING MODE ACTIVE:
                             raw_text="",
                             confidence=0.0,
                             processing_time=0.0,
-                            token_usage={}
+                            token_usage={},
                         )
                     )
                 else:
@@ -666,4 +632,3 @@ COMMAND PARSING MODE ACTIVE:
                 await asyncio.sleep(0.1)  # 100ms 간격
 
         return all_results
-

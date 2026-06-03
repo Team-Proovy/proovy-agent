@@ -13,7 +13,7 @@ from .exceptions import (
     QualityThresholdError,
     VLMProcessingError,
 )
-from .image_processor import ImageProcessor, ImageQuality, ProcessingOptions
+from .math_postprocessor import MathPattern, MathPostProcessor
 from .models import (
     CommandTag,
     MathExpression,
@@ -33,11 +33,11 @@ __all__ = [
     "ConfidenceThresholdError",
     "FileConversionError",
     "ImageProcessingError",
-    "ImageProcessor",
-    "ImageQuality",
     "LanguageDetectionError",
     "MathExpression",
     "MathParsingError",
+    "MathPattern",
+    "MathPostProcessor",
     "OCRError",
     "OCROptions",
     "OCRRequest",
@@ -47,7 +47,6 @@ __all__ = [
     "PageResult",
     "ProcessedImage",
     "ProcessingMetadata",
-    "ProcessingOptions",
     "QualityThresholdError",
     "VLMEngine",
     "VLMProcessingError",
