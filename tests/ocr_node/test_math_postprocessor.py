@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """수학 표기법 후처리 모듈 테스트."""
 
 import pytest

@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """수학 표기법 후처리 모듈 - VLM OCR 결과를 LaTeX으로 변환."""
 
 import re
@@ -291,18 +292,18 @@ class MathPostProcessor:
         # direction이 -1이면 왼쪽으로, 1이면 오른쪽으로 확장
         while 0 <= current_pos < len(text):
             char = text[current_pos]
-            # 공백은 한 개까지 허용하여 "a × b" 같은 표현을 하나로 처리
+            # 공백도 수학 표현의 일부로 포함하여 "a × b" 같은 표현을 하나로 처리  # ruff: noqa: RUF003
             if char in math_chars or ("가" <= char <= "힣") or char == " ":
                 current_pos += direction
             else:
                 break
-        
+
         # direction에 따라 경계를 조정
         if direction == -1:
             # 왼쪽으로 확장했으므로 현재 위치 반환
             return max(0, current_pos)
         else:
-            # 오른쪽으로 확장했으므로 현재 위치 반환  
+            # 오른쪽으로 확장했으므로 현재 위치 반환
             return min(len(text), current_pos)
 
     def _merge_overlapping_regions(

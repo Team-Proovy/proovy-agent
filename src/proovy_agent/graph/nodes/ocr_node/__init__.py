@@ -1,5 +1,6 @@
 """OCR 노드 - VLM 기반 이미지 텍스트 추출 및 @커맨드 파싱."""
 
+from .command_parser import CommandParser, ParsedCommand, TagType, create_command_parser
 from .exceptions import (
     CommandParsingError,
     ConfidenceThresholdError,
@@ -28,6 +29,7 @@ from .models import (
 from .vlm_engine import VLMEngine
 
 __all__ = [
+    "CommandParser",
     "CommandParsingError",
     "CommandTag",
     "ConfidenceThresholdError",
@@ -45,10 +47,13 @@ __all__ = [
     "OCRResult",
     "OCRTimeoutError",
     "PageResult",
+    "ParsedCommand",
     "ProcessedImage",
     "ProcessingMetadata",
     "QualityThresholdError",
+    "TagType",
     "VLMEngine",
     "VLMProcessingError",
     "VLMResult",
+    "create_command_parser",
 ]
