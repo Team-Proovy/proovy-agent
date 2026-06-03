@@ -4,7 +4,10 @@ VLM 기반 이미지 텍스트 추출, @커맨드 파싱, 수학 표기법 후�
 LangGraph Preprocessor로 동작하는 메인 OCR 노드입니다.
 """
 
+import asyncio
+import base64
 import io
+import re
 import time
 from typing import Any
 
@@ -20,7 +23,7 @@ from .exceptions import (
 )
 from .image_processor import ImageProcessor, ProcessingOptions
 from .math_postprocessor import MathPostProcessor
-from .models import OCROptions, OCRRequest, OCRResult, ProcessingMetadata
+from .models import CommandTag, OCROptions, OCRRequest, OCRResult, ProcessingMetadata
 from .vlm_engine import VLMEngine
 
 
@@ -44,15 +47,13 @@ class OCRNode:
         Returns:
             업데이트할 상태 딕셔너리 (ocr_text, ocr_confidence, tags)
         """
-        start_time = time.time()
-
         try:
             # 1. raw_input에서 이미지 데이터 추출
-            image_data = await self._extract_image_data(state.raw_input)
+            image_data = self._extract_image_data(state.raw_input)
 
             # 이미지가 없으면 텍스트만 처리 (기존 preprocessor 동작)
             if not image_data:
-                return await self._process_text_only(state)
+                return self._process_text_only(state)
 
             # 2. OCRRequest 생성
             ocr_request = OCRRequest(
@@ -70,9 +71,10 @@ class OCRNode:
 
         except Exception as e:
             # 오류 발생 시 기본값으로 폴백
+            start_time = time.time()  # 오류 처리에서만 필요
             return await self._handle_processing_error(e, state, start_time)
 
-    async def _extract_image_data(self, raw_input: dict[str, Any]) -> bytes | None:
+    def _extract_image_data(self, raw_input: dict[str, Any]) -> bytes | None:
         """raw_input에서 이미지 데이터 추출."""
         # 이미지 필드들 확인
         image_fields = ["image", "images", "file", "upload", "photo"]
@@ -88,7 +90,6 @@ class OCRNode:
 
                     # 문자열 입력 처리 (base64 또는 data URL)
                     if isinstance(image_value, str):
-                        import base64
 
                         # data URL 형태인 경우 (data:image/png;base64,...)
                         if image_value.startswith("data:image/") and ";base64," in image_value:
@@ -115,17 +116,29 @@ class OCRNode:
 
         return None
 
-    async def _process_text_only(self, state: ProovyState) -> dict[str, Any]:
+    def _process_text_only(self, state: ProovyState) -> dict[str, Any]:
         """이미지가 없는 경우 텍스트만 처리 (기존 preprocessor 동작)."""
-        import re
 
         problem = state.raw_input.get("problem", "")
 
-        # @커맨드 제거한 순수 텍스트
+        # @커맨드 파싱 (CommandParser 사용)
+        parsing_result = self.command_parser.parse(problem)
+
+        # @커맨드 제거한 순수 텍스트 (CommandParser와 동일한 패턴)
         clean_text = re.sub(r"@\S+", "", problem).strip()
 
         # 기존 preprocessor와 동일한 태그 형식 유지 (@원문 형태)
-        original_tags = re.findall(r"@\S+", problem)
+        # CommandParser detected_patterns에서 원문 커맨드 추출
+        original_tags = []
+        for pattern in parsing_result.detected_patterns:
+            if pattern.startswith("@command: "):
+                original_command = pattern.replace("@command: ", "").strip()
+                original_tags.append(original_command)
+
+        # CommandParser가 패턴을 찾지 못한 경우에는 빈 태그 반환
+        # regex fallback 제거 - CommandParser 결과만 신뢰
+        if not original_tags:
+            original_tags = []
 
         return {
             "ocr_text": clean_text or problem,
@@ -141,7 +154,7 @@ class OCRNode:
 
         try:
             # 1. 이미지 로드
-            pil_image = await self._load_image(image_data)
+            pil_image = self._load_image(image_data)
 
             # 2. 이미지 전처리
             processing_options = ProcessingOptions(
@@ -168,30 +181,41 @@ class OCRNode:
             # 7. 결과 통합
             processing_time = time.time() - start_time
 
+            # VLMResult에서 폴백 사용 여부 확인
+            fallback_used = hasattr(vlm_result, 'fallback_used') and vlm_result.fallback_used
+
             metadata = ProcessingMetadata(
                 total_processing_time=processing_time,
                 model_used=vlm_result.model_name,
-                fallback_used=False,  # TODO: 실제 폴백 사용 여부 추적
+                fallback_used=fallback_used,
                 pages_processed=1,
                 quality_score=vlm_result.confidence,
                 language_detected=detected_language,
             )
 
-            # 커맨드 태그로 변환 (원문 @커맨드 추출)
-            import re
+            # 커맨드 태그로 변환 (CommandParser detected_patterns 사용)
 
-            from .models import CommandTag
+            # CommandParser detected_patterns에서 원본 @커맨드 추출
+            # detected_patterns가 실제 원문 @커맨드를 포함한다고 가정
+            original_commands = []
+            for pattern in command_result.detected_patterns:
+                if pattern.startswith("@command: "):
+                    original_command = pattern.replace("@command: ", "").strip()
+                    original_commands.append(original_command)
 
-            original_command_text = re.findall(r"@\S+", vlm_result.raw_text)
-
+            # CommandTag 생성 - detected_patterns 기반으로 안전하게 매핑
             command_tags = []
-            for idx, tag in enumerate(command_result.tags):
-                original_text = original_command_text[idx] if idx < len(original_command_text) else f"@{tag}"
+            # command_result.tags와 original_commands 개수가 다를 수 있으므로
+            # 안전하게 처리: detected_patterns에서 직접 CommandTag 생성
+            for idx, original_command in enumerate(original_commands):
+                # tags에서 해당하는 태그 찾기 (순서 기반)
+                tag = command_result.tags[idx] if idx < len(command_result.tags) else "unknown"
+
                 command_tags.append(CommandTag(
                     command=tag,
-                    original_text=original_text,
+                    original_text=original_command,
                     confidence=command_result.confidence,
-                    position=0,
+                    position=idx * 10,  # 위치 정보 추정
                 ))
 
             # @커맨드 제거된 텍스트로 통일성 유지
@@ -217,7 +241,7 @@ class OCRNode:
                 "이미지 품질을 확인하거나 다른 이미지로 시도해보세요",
             ) from e
 
-    async def _load_image(self, image_data: bytes) -> Image.Image:
+    def _load_image(self, image_data: bytes) -> Image.Image:
         """이미지 데이터를 PIL Image로 로드."""
         try:
             image_stream = io.BytesIO(image_data)
@@ -264,21 +288,13 @@ class OCRNode:
         self, error: Exception, state: ProovyState, start_time: float
     ) -> dict[str, Any]:
         """처리 오류 발생 시 폴백 처리."""
-        processing_time = time.time() - start_time
-
         # 오류 로깅 (실제 운영에서는 logger 사용)
+        # processing_time = time.time() - start_time
         # logger.warning(f"OCR processing failed: {error}, fallback to text-only")
-
-        # 오류 정보를 메타데이터로 포함 (향후 로깅에 사용 가능)
-        error_info = {  # noqa: F841
-            "error_type": type(error).__name__,
-            "error_message": str(error),
-            "processing_time": processing_time,
-        }
 
         # 텍스트만 처리하여 폴백
         try:
-            fallback_result = await self._process_text_only(state)
+            fallback_result = self._process_text_only(state)
             # 오류 정보를 신뢰도에 반영
             fallback_result["ocr_confidence"] = max(
                 fallback_result.get("ocr_confidence", 0.0) - 0.3, 0.1
@@ -302,20 +318,22 @@ class OCRNode:
             }
 
 
-# 모듈 레벨 싱글톤 (성능 최적화)
+# 모듈 레벨 싱글톤 (동시성 안전)
 _ocr_node_instance: OCRNode | None = None
+_ocr_node_lock = asyncio.Lock()
 
 
-def _get_ocr_node() -> OCRNode:
-    """OCRNode 싱글톤 인스턴스 반환."""
+async def _get_ocr_node() -> OCRNode:
+    """OCRNode 싱글톤 인스턴스 반환 (동시성 안전)."""
     global _ocr_node_instance
-    if _ocr_node_instance is None:
-        _ocr_node_instance = OCRNode()
+    async with _ocr_node_lock:
+        if _ocr_node_instance is None:
+            _ocr_node_instance = OCRNode()
     return _ocr_node_instance
 
 
 # LangGraph 노드 함수
 async def ocr_node(state: ProovyState) -> dict[str, Any]:
     """OCRNode를 LangGraph 노드로 래핑."""
-    node = _get_ocr_node()  # 싱글톤 사용으로 성능 최적화
+    node = await _get_ocr_node()  # 동시성 안전한 싱글톤
     return await node.process(state)

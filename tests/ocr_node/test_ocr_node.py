@@ -50,8 +50,7 @@ class TestOCRNode:
         # 기존 preprocessor 호환성 - @원문 형태 태그 확인
         assert "@용어" in " ".join(result["tags"]) or any("@" in tag for tag in result["tags"])
 
-    @pytest.mark.asyncio
-    async def test_extract_image_data_bytes(self):
+    def test_extract_image_data_bytes(self):
         """바이트 이미지 데이터 추출 테스트."""
         # 작은 PNG 이미지 생성
         img = Image.new("RGB", (100, 100), color="white")
@@ -59,11 +58,10 @@ class TestOCRNode:
         img.save(img_bytes, format="PNG")
         img_data = img_bytes.getvalue()
 
-        image_data = await self.ocr_node._extract_image_data({"image": img_data})
+        image_data = self.ocr_node._extract_image_data({"image": img_data})
         assert image_data == img_data
 
-    @pytest.mark.asyncio
-    async def test_extract_image_data_base64(self):
+    def test_extract_image_data_base64(self):
         """base64 이미지 데이터 추출 테스트."""
         # 작은 PNG 이미지 생성
         img = Image.new("RGB", (100, 100), color="white")
@@ -72,17 +70,15 @@ class TestOCRNode:
         img_data = img_bytes.getvalue()
         base64_data = base64.b64encode(img_data).decode()
 
-        image_data = await self.ocr_node._extract_image_data({"image": base64_data})
+        image_data = self.ocr_node._extract_image_data({"image": base64_data})
         assert image_data == img_data
 
-    @pytest.mark.asyncio
-    async def test_extract_image_data_none(self):
+    def test_extract_image_data_none(self):
         """이미지 데이터가 없는 경우."""
-        result = await self.ocr_node._extract_image_data({"problem": "텍스트만 있음"})
+        result = self.ocr_node._extract_image_data({"problem": "텍스트만 있음"})
         assert result is None
 
-    @pytest.mark.asyncio
-    async def test_load_image_valid(self):
+    def test_load_image_valid(self):
         """유효한 이미지 로드 테스트."""
         # 작은 PNG 이미지 생성
         img = Image.new("RGB", (100, 100), color="white")
@@ -90,12 +86,11 @@ class TestOCRNode:
         img.save(img_bytes, format="PNG")
         img_data = img_bytes.getvalue()
 
-        loaded_img = await self.ocr_node._load_image(img_data)
+        loaded_img = self.ocr_node._load_image(img_data)
         assert isinstance(loaded_img, Image.Image)
         assert loaded_img.size == (100, 100)
 
-    @pytest.mark.asyncio
-    async def test_load_image_rgba_conversion(self):
+    def test_load_image_rgba_conversion(self):
         """RGBA 이미지를 RGB로 변환하는 테스트."""
         # RGBA 이미지 생성
         img = Image.new("RGBA", (100, 100), color=(255, 255, 255, 128))
@@ -103,11 +98,10 @@ class TestOCRNode:
         img.save(img_bytes, format="PNG")
         img_data = img_bytes.getvalue()
 
-        loaded_img = await self.ocr_node._load_image(img_data)
+        loaded_img = self.ocr_node._load_image(img_data)
         assert loaded_img.mode == "RGB"
 
-    @pytest.mark.asyncio
-    async def test_load_image_too_small(self):
+    def test_load_image_too_small(self):
         """너무 작은 이미지 처리 테스트."""
         # 너무 작은 이미지 생성
         img = Image.new("RGB", (30, 30), color="white")
@@ -117,7 +111,7 @@ class TestOCRNode:
 
         from proovy_agent.graph.nodes.ocr_node.exceptions import ImageProcessingError
         with pytest.raises(ImageProcessingError):  # ImageProcessingError가 발생해야 함
-            await self.ocr_node._load_image(img_data)
+            self.ocr_node._load_image(img_data)
 
     def test_convert_to_state_update(self):
         """OCRResult를 state 업데이트로 변환 테스트."""
@@ -337,8 +331,7 @@ class TestPerformanceAndEdgeCases:
         assert len(result["ocr_text"]) > 0
         assert any("@용어" in tag for tag in result["tags"])
 
-    @pytest.mark.asyncio
-    async def test_multiple_image_fields(self):
+    def test_multiple_image_fields(self):
         """여러 이미지 필드가 있는 경우 첫 번째 유효한 것 사용."""
         # 유효한 이미지 생성
         img = Image.new("RGB", (100, 100), color="white")
@@ -352,7 +345,7 @@ class TestPerformanceAndEdgeCases:
             "photo": b"invalid_data",
         }
 
-        extracted = await self.ocr_node._extract_image_data(raw_input)
+        extracted = self.ocr_node._extract_image_data(raw_input)
         assert extracted == valid_img_data
 
     @pytest.mark.asyncio
