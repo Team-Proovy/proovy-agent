@@ -47,8 +47,8 @@ class TestOCRNode:
         assert "ocr_confidence" in result
         assert "tags" in result
         assert result["ocr_confidence"] == 1.0  # 텍스트 입력은 100% 신뢰도
-        # command parser가 더 넓은 범위를 포함할 수 있음 - 기각역이 포함된 tag 확인
-        assert any("기각역" in tag for tag in result["tags"])
+        # 기존 preprocessor 호환성 - @원문 형태 태그 확인
+        assert "@용어" in " ".join(result["tags"]) or any("@" in tag for tag in result["tags"])
 
     @pytest.mark.asyncio
     async def test_extract_image_data_bytes(self):
@@ -155,7 +155,7 @@ class TestOCRNode:
 
         assert state_update["ocr_text"] == "기각역의 정의에 대해 설명하겠습니다."
         assert state_update["ocr_confidence"] == 0.85
-        assert state_update["tags"] == ["term:기각역", "pdf"]
+        assert state_update["tags"] == ["@용어 기각역", "@해설지"]  # 기존 preprocessor 호환성
 
     @pytest.mark.asyncio
     async def test_handle_processing_error(self):
@@ -177,7 +177,7 @@ class TestOCRNode:
         assert "ocr_confidence" in result
         assert "tags" in result
         assert result["ocr_confidence"] < 1.0  # 오류로 인한 신뢰도 감소
-        assert any("삼각함수" in tag for tag in result["tags"])  # 폴백에서 파싱된 태그
+        assert any("@용어" in tag for tag in result["tags"])  # 폴백에서 파싱된 @원문 태그
 
 
 class TestOCRNodeIntegration:
@@ -244,7 +244,7 @@ class TestOCRNodeIntegration:
         assert "ocr_confidence" in result
         assert "tags" in result
         assert result["ocr_confidence"] == 0.85
-        assert any("기각역" in tag for tag in result["tags"])
+        assert any("@용어" in tag for tag in result["tags"])
 
         # Mock 호출 검증
         mock_processor_instance.process.assert_called_once()
@@ -270,7 +270,7 @@ class TestLangGraphIntegration:
         assert "ocr_text" in result
         assert "ocr_confidence" in result
         assert "tags" in result
-        assert "video" in result["tags"]
+        assert any("@해설영상" in tag for tag in result["tags"])
 
 
 class TestErrorHandling:
@@ -335,7 +335,7 @@ class TestPerformanceAndEdgeCases:
 
         assert "ocr_text" in result
         assert len(result["ocr_text"]) > 0
-        assert any("기각역" in tag for tag in result["tags"])
+        assert any("@용어" in tag for tag in result["tags"])
 
     @pytest.mark.asyncio
     async def test_multiple_image_fields(self):
@@ -368,7 +368,7 @@ class TestPerformanceAndEdgeCases:
         result = await self.ocr_node.process(state)
 
         assert "ocr_text" in result
-        assert any("삼각함수" in tag for tag in result["tags"])
+        assert any("@용어" in tag for tag in result["tags"])
         # 유니코드 문자가 손실되지 않아야 함
         assert "α" in result["ocr_text"] or "α" in unicode_text  # noqa: RUF001
 

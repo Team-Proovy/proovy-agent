@@ -86,24 +86,28 @@ class OCRNode:
                     if isinstance(image_value, bytes):
                         return image_value
 
-                    # base64 문자열인 경우
+                    # 문자열 입력 처리 (base64 또는 data URL)
                     if isinstance(image_value, str):
                         import base64
 
+                        # data URL 형태인 경우 (data:image/png;base64,...)
+                        if image_value.startswith("data:image/") and ";base64," in image_value:
+                            try:
+                                # data URL에서 base64 부분만 추출
+                                base64_data = image_value.split(";base64,", 1)[1]
+                                return base64.b64decode(base64_data)
+                            except Exception:
+                                pass  # data URL 처리 실패, 다른 방법 시도
+
+                        # 순수 base64 문자열인 경우
                         try:
                             return base64.b64decode(image_value)
                         except Exception:
-                            continue  # base64가 아닌 일반 텍스트
+                            pass  # base64 디코드 실패, 파일 경로로 시도
 
-                    # 파일 경로인 경우 (동기 파일 읽기는 일반적으로 허용됨)
-                    if isinstance(image_value, str) and image_value.endswith(
-                        (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp")
-                    ):
-                        try:
-                            with open(image_value, "rb") as f:  # noqa: ASYNC230
-                                return f.read()
-                        except Exception:
-                            continue
+                        # 보안상 파일 경로 처리는 제거
+                        # 프로덕션에서는 업로드된 이미지만 처리하는 것이 안전
+                        continue
 
                 except Exception:
                     # 해당 필드에서 이미지 추출 실패, 다음 필드 시도
@@ -117,16 +121,16 @@ class OCRNode:
 
         problem = state.raw_input.get("problem", "")
 
-        # @커맨드 파싱
-        parsing_result = self.command_parser.parse(problem)
-
         # @커맨드 제거한 순수 텍스트
         clean_text = re.sub(r"@\S+", "", problem).strip()
+
+        # 기존 preprocessor와 동일한 태그 형식 유지 (@원문 형태)
+        original_tags = re.findall(r"@\S+", problem)
 
         return {
             "ocr_text": clean_text or problem,
             "ocr_confidence": 1.0,  # 텍스트 입력은 100% 신뢰도
-            "tags": parsing_result.tags,
+            "tags": original_tags,  # 기존 preprocessor 호환성 유지
         }
 
     async def _process_full_pipeline(
@@ -173,21 +177,29 @@ class OCRNode:
                 language_detected=detected_language,
             )
 
-            # 커맨드 태그로 변환
+            # 커맨드 태그로 변환 (원문 @커맨드 추출)
+            import re
+
             from .models import CommandTag
 
-            command_tags = [
-                CommandTag(
+            original_command_text = re.findall(r"@\S+", vlm_result.raw_text)
+
+            command_tags = []
+            for idx, tag in enumerate(command_result.tags):
+                original_text = original_command_text[idx] if idx < len(original_command_text) else f"@{tag}"
+                command_tags.append(CommandTag(
                     command=tag,
-                    original_text=tag,
+                    original_text=original_text,
                     confidence=command_result.confidence,
-                    position=0,  # 간단히 0으로 설정
-                )
-                for tag in command_result.tags
-            ]
+                    position=0,
+                ))
+
+            # @커맨드 제거된 텍스트로 통일성 유지
+            clean_text = re.sub(r"@\S+", "", vlm_result.raw_text).strip()
+            final_text = clean_text or vlm_result.raw_text
 
             return OCRResult(
-                extracted_text=vlm_result.raw_text,
+                extracted_text=final_text,  # @커맨드 제거된 텍스트
                 confidence=vlm_result.confidence,
                 command_tags=command_tags,
                 math_expressions=math_expressions,
@@ -239,13 +251,13 @@ class OCRNode:
 
     def _convert_to_state_update(self, ocr_result: OCRResult) -> dict[str, Any]:
         """OCRResult를 ProovyState 업데이트 형태로 변환."""
-        # 커맨드 태그에서 태그 문자열만 추출
-        tags = [tag.command for tag in ocr_result.command_tags]
+        # 기존 preprocessor 호환성을 위해 @원문 형태로 변환
+        original_tags = [tag.original_text for tag in ocr_result.command_tags]
 
         return {
             "ocr_text": ocr_result.extracted_text,
             "ocr_confidence": ocr_result.confidence,
-            "tags": tags,
+            "tags": original_tags,  # 기존 preprocessor 호환성 유지
         }
 
     async def _handle_processing_error(
@@ -274,16 +286,36 @@ class OCRNode:
             return fallback_result
 
         except Exception:
-            # 최종 폴백 - 빈 결과 반환
+            # 최종 폴백 - 다른 텍스트 필드 확인
+            text_fields = ["problem", "text", "content", "description"]
+            fallback_text = ""
+
+            for field in text_fields:
+                if state.raw_input.get(field):
+                    fallback_text = str(state.raw_input[field])
+                    break
+
             return {
-                "ocr_text": state.raw_input.get("problem", ""),
+                "ocr_text": fallback_text or "이미지 처리 실패",
                 "ocr_confidence": 0.1,
                 "tags": [],
             }
 
 
+# 모듈 레벨 싱글톤 (성능 최적화)
+_ocr_node_instance: OCRNode | None = None
+
+
+def _get_ocr_node() -> OCRNode:
+    """OCRNode 싱글톤 인스턴스 반환."""
+    global _ocr_node_instance
+    if _ocr_node_instance is None:
+        _ocr_node_instance = OCRNode()
+    return _ocr_node_instance
+
+
 # LangGraph 노드 함수
 async def ocr_node(state: ProovyState) -> dict[str, Any]:
     """OCRNode를 LangGraph 노드로 래핑."""
-    node = OCRNode()
+    node = _get_ocr_node()  # 싱글톤 사용으로 성능 최적화
     return await node.process(state)
