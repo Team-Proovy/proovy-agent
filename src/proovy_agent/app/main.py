@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from proovy_agent.app.api.v1.router import router as v1_router
+from proovy_agent.app.api.v1.solve import cancel_active_solve_tasks
 from proovy_agent.common.checkpoint.saver import open_checkpointer
 from proovy_agent.common.config import settings
 from proovy_agent.common.sandbox.client import close_daytona_client, init_daytona_client
@@ -32,7 +33,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 allow_memory_fallback=settings.debug,
             ) as checkpointer:
                 build_graph(checkpointer)
-                yield
+                try:
+                    yield
+                finally:
+                    await cancel_active_solve_tasks()
     finally:
         await close_daytona_client()
 

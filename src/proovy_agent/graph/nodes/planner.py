@@ -1,7 +1,7 @@
 """Planner 노드 — plan 생성 + 난이도 선택 (모델 매핑은 코드에서 관리)."""
 
-from contextlib import suppress
 from decimal import Decimal
+import logging
 from typing import Literal
 from uuid import UUID
 
@@ -14,7 +14,8 @@ from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import ErrorPayload, PageStartPayload
 from proovy_agent.features.credits import (
     CreditAccountNotFoundError,
-    CreditLedgerError,
+    CreditHoldNotFoundError,
+    CreditLedgerClient,
     InsufficientCreditsError,
     create_credit_ledger_client,
 )
@@ -30,6 +31,7 @@ _DIFFICULTY_TO_MODEL: dict[str, str] = {
     "medium": "sonnet",
     "hard": "opus",
 }
+logger = logging.getLogger(__name__)
 _VIDEO_ONLY_HINTS = (
     "@해설영상",
     "해설영상",
@@ -199,6 +201,30 @@ def _get_video_job_client() -> object | None:
     return create_video_job_client(settings)
 
 
+def _get_credit_ledger_client() -> CreditLedgerClient | None:
+    return current_credit_ledger_client.get() or create_credit_ledger_client()
+
+
+async def _release_stale_hold(state: ProovyState) -> None:
+    if not state.hold_id:
+        return
+
+    ledger = _get_credit_ledger_client()
+    if ledger is None:
+        return
+
+    try:
+        hold_id = UUID(state.hold_id)
+    except ValueError:
+        logger.warning("잘못된 stale credit hold_id를 무시합니다: hold_id=%s", state.hold_id)
+        return
+
+    try:
+        await ledger.release_hold(state.user_id, hold_id)
+    except CreditHoldNotFoundError:
+        logger.info("이미 없는 stale credit hold를 무시합니다: hold_id=%s", hold_id)
+
+
 def _credit_exhausted_message(required: Decimal, available: Decimal) -> str:
     return (
         "크레딧이 부족합니다. "
@@ -215,13 +241,9 @@ async def _reserve_plan_hold(
     explanation_mode: Literal["full", "brief"],
     planner_credit: CreditEntry,
 ) -> str | None:
-    ledger = current_credit_ledger_client.get() or create_credit_ledger_client()
+    ledger = _get_credit_ledger_client()
     if ledger is None:
         return None
-
-    if state.hold_id:
-        with suppress(ValueError, CreditLedgerError):
-            await ledger.release_hold(state.user_id, UUID(state.hold_id))
 
     required = estimate_plan_hold_amount(
         plan,
@@ -252,6 +274,7 @@ def _is_video_only_request(user_text: str) -> bool:
 
 
 async def planner(state: ProovyState) -> dict:
+    await _release_stale_hold(state)
     await _preflight_video_retry(state)
 
     llm = get_llm("flash")

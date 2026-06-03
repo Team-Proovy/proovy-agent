@@ -216,6 +216,7 @@ async def test_planner_rejects_insufficient_credits_before_execution() -> None:
 
 @pytest.mark.asyncio
 async def test_retry_preflight_failure_does_not_create_hold() -> None:
+    stale_hold_id = uuid4()
     ledger = _FakeCreditLedger()
     video_client = _FakeVideoClient(
         SimpleNamespace(
@@ -228,6 +229,7 @@ async def test_retry_preflight_failure_does_not_create_hold() -> None:
     state = ProovyState(
         user_id="u",
         thread_id="t",
+        hold_id=str(stale_hold_id),
         messages=[
             HumanMessage(
                 content="이전 영상 다시 만들기",
@@ -253,6 +255,7 @@ async def test_retry_preflight_failure_does_not_create_hold() -> None:
 
     get_llm.assert_not_called()
     assert video_client.get_progress_calls == [("job-1", "u")]
+    assert ledger.release_calls == [("u", stale_hold_id)]
     assert ledger.hold_calls == []
 
 
@@ -319,7 +322,10 @@ async def test_planner_releases_stale_hold_before_new_plan_hold() -> None:
 
 
 @pytest.mark.asyncio
-async def test_planner_works_without_ledger_client_for_unit_tests() -> None:
+async def test_planner_works_without_ledger_client_for_unit_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(planner_module.settings, "database_url", "")
     state = ProovyState(
         user_id="u",
         thread_id="t",

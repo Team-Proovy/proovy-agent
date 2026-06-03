@@ -1,5 +1,6 @@
 """POST /api/v1/solve SSE 엔드포인트 테스트."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from pydantic import BaseModel, TypeAdapter
 import pytest
 
 from proovy_agent.app import main
+from proovy_agent.app.api.v1 import solve as solve_module
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import (
     PageStartPayload,
@@ -312,3 +314,33 @@ def test_solve_releases_active_hold_on_graph_exception() -> None:
     assert [f["data"]["type"] for f in frames] == ["error"]
     assert ledger.hold_calls == [("u", Decimal("20"), "th-1")]
     assert ledger.release_calls == [("u", ledger.hold_id)]
+
+
+@pytest.mark.asyncio
+async def test_cancel_active_solve_tasks_cancels_and_awaits_registered_tasks() -> None:
+    cleanup: list[str] = []
+    ready = asyncio.Event()
+
+    async def _sleeping_task() -> None:
+        try:
+            ready.set()
+            await asyncio.Event().wait()
+        finally:
+            cleanup.append("done")
+
+    task = asyncio.create_task(_sleeping_task())
+    solve_module._active_tasks.add(task)
+    task.add_done_callback(solve_module._active_tasks.discard)
+    try:
+        await ready.wait()
+
+        await solve_module.cancel_active_solve_tasks()
+
+        assert task.done()
+        assert cleanup == ["done"]
+        assert task not in solve_module._active_tasks
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        solve_module._active_tasks.discard(task)

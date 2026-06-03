@@ -53,6 +53,18 @@ async def _release_active_credit_hold(
         logger.exception("그래프 실패 후 pending credit hold release 실패: hold_id=%s", hold_id)
 
 
+async def cancel_active_solve_tasks() -> None:
+    """Cancel and await in-flight solve tasks before shared clients close."""
+    current_task = asyncio.current_task()
+    tasks = [task for task in _active_tasks if task is not current_task and not task.done()]
+    if not tasks:
+        return
+
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @router.post("/solve", response_class=EventSourceResponse)
 async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
@@ -79,6 +91,7 @@ async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventS
             await emitter.emit(DonePayload())
         except asyncio.CancelledError:
             # 클라이언트 연결 종료 — done/error 둘 다 보내지 않는다
+            await _release_active_credit_hold(credit_ledger_client, state.user_id)
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception as exc:
             logger.exception("solve 실행 중 오류 발생")

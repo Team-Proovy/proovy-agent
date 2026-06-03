@@ -55,7 +55,7 @@ async def credit_settler(state: ProovyState) -> dict:
         "messages": [
             AIMessage(
                 f"총 {float(sync_cost)}cr 사용",
-                metadata={"display": "system"},
+                response_metadata={"display": "system"},
             )
         ],
     }
