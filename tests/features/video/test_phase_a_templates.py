@@ -6,8 +6,12 @@ import ast
 from collections.abc import Mapping
 import shutil
 import subprocess
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from proovy_agent.features.video.exceptions import InvalidStageOutputError
 from proovy_agent.features.video.models import (
@@ -227,7 +231,9 @@ async def test_stage_render_includes_template_render_error_details() -> None:
     }
 
 
-def test_phase_a_cjk_mathtex_smoke_render_when_manim_stack_available(tmp_path) -> None:
+def test_phase_a_cjk_mathtex_smoke_render_when_manim_stack_available(
+    tmp_path: Path,
+) -> None:
     manim = shutil.which("manim")
     xelatex = shutil.which("xelatex")
     kpsewhich = shutil.which("kpsewhich")

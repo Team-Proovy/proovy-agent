@@ -5,7 +5,7 @@ title: "deterministic 템플릿 5종 (intro/equation_write/derivation/highlight/
 spec: "specs/phase-1/01-video-phase-a-skeleton.md"
 issue: "80"
 depends_on: ["1.06"]
-blocks: ["1.10", "2.04"]
+blocks: ["1.10", "2.04", "3.09"]
 estimate: "M"
 status: "todo"
 owner: ""

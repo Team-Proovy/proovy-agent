@@ -5,7 +5,7 @@ title: "word-timestamp 시각 강조 동기 (timeline.py)"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "97"
 depends_on: ["1.09", "1.06"]
-blocks: []
+blocks: ["3.09"]
 estimate: "M"
 status: "done"
 completed_at: 2026-06-01
@@ -46,4 +46,8 @@ sprint: ""
   `diagnostics["timeline"]` 생성은 완료됐지만, deterministic template
   `manim_source`는 아직 timeline event를 `self.wait(...)` / `Indicate(...)`로
   주입하지 않는다. 실제 renderer/worker가 template source를 소비하는 단계에서
-  timeline → scene 주입 계약을 명시하고 테스트한다.
+  timeline → scene 주입 계약을 명시하고 테스트한다. 후속 추적:
+  [Task 3.09](09-deterministic-template-timeline-scene-injection.md) /
+  [#123](https://github.com/Team-Proovy/proovy-agent/issues/123) — `stage_render`,
+  `diagnostics["timeline"]`, `manim_source` 계약과 `self.wait(...)` /
+  `Indicate(...)` 주입 테스트를 포함한다.

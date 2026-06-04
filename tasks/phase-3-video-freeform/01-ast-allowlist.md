@@ -44,5 +44,5 @@ sprint: ""
 - AST는 자유 영역(`visual_scene`)에만 적용. deterministic 템플릿/`graph_plot` DSL은 대상 아님
 - 2026-06-04 PR #122 review follow-up: Python AST allowlist는 TeX 문자열 자체를
   검증하지 않는다. renderer에서 LaTeX/MathTex 명령 allowlist를 별도로 두기로
-  결정하면 `\input{}` 등 위험 명령 차단 규칙을 2.05 sandbox audit과 함께
-  테스트한다.
+  결정했으므로, `\input{}` 등 위험 명령 차단 규칙을 2.05 sandbox audit과
+  함께 테스트한다.
