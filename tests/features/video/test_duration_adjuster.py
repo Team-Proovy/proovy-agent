@@ -72,6 +72,25 @@ def test_disallowed_narration_change_is_rejected() -> None:
         adapt_segment_timing(segment=segment, tts_result=tts_result)
 
 
+def test_tts_duration_below_band_clamps_render_duration_to_min_band() -> None:
+    segment = _equation_segment()
+    tts_result = SegmentTTSResult(
+        segment_id="step-1",
+        narration="양변에 3을 더합니다.",
+        duration_seconds=1.0,
+    )
+
+    adaptation = adapt_segment_timing(segment=segment, tts_result=tts_result)
+
+    assert adaptation.status == "out_of_band"
+    assert adaptation.method == "clamp_to_min_band"
+    assert adaptation.render_duration_seconds == pytest.approx(adaptation.min_band_seconds)
+    assert adaptation.tts_duration_seconds == 1.0
+    assert adaptation.motion_scale == pytest.approx(0.8)
+    assert adaptation.used_resynthesis is False
+    assert adaptation.fallback_reasons == ("tts_duration_below_band",)
+
+
 def test_out_of_band_duration_is_marked_without_resynthesis() -> None:
     segment = _equation_segment()
     tts_result = SegmentTTSResult(
@@ -87,6 +106,33 @@ def test_out_of_band_duration_is_marked_without_resynthesis() -> None:
     assert adaptation.render_duration_seconds == 6.0
     assert adaptation.used_resynthesis is False
     assert adaptation.fallback_reasons == ("tts_duration_above_band",)
+
+
+def test_leading_compression_rule_does_not_remove_middle_occurrences() -> None:
+    original = "먼저 설명하고, 먼저 양변에 더합니다."
+
+    leading_only = validate_narration_compression(
+        original_narration=original,
+        tts_narration="설명하고, 먼저 양변에 더합니다.",
+    )
+    over_compressed = validate_narration_compression(
+        original_narration=original,
+        tts_narration="설명하고, 양변에 더합니다.",
+    )
+
+    assert leading_only.allowed is True
+    assert leading_only.applied_rules == ("remove_leading_first",)
+    assert over_compressed.allowed is False
+
+
+def test_narration_compression_normalizes_unicode_compatibility_forms() -> None:
+    check = validate_narration_compression(
+        original_narration="정답은 x\uff1d\uff13입니다.",
+        tts_narration="정답은 x=3입니다.",
+    )
+
+    assert check.allowed is True
+    assert check.compression_applied is False
 
 
 def test_missing_tts_duration_keeps_unknown_duration_explicit() -> None:

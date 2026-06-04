@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from itertools import combinations
 import re
 from typing import TYPE_CHECKING, Literal
+import unicodedata
 
 if TYPE_CHECKING:
     from proovy_agent.features.video.models import ScriptSegment, SegmentTTSResult
@@ -15,6 +16,7 @@ TimingAdaptationMethod = Literal[
     "none",
     "speed_up_motion",
     "stretch_motion",
+    "clamp_to_min_band",
     "hold_final_frame",
     "whitelisted_compression",
     "unknown_duration",
@@ -173,10 +175,12 @@ def adapt_segment_timing(
     duration = tts_result.duration_seconds
     duration_ratio = duration / base_duration if base_duration > 0 else 1.0
     motion_scale = _motion_scale(duration_ratio)
+    render_duration = duration
     status: TimingAdaptationStatus = "converged"
     fallback_reasons: tuple[str, ...] = ()
     if duration < min_band_seconds:
         status = "out_of_band"
+        render_duration = min_band_seconds
         fallback_reasons = ("tts_duration_below_band",)
     elif duration > max_band_seconds:
         status = "out_of_band"
@@ -191,7 +195,7 @@ def adapt_segment_timing(
         segment_id=segment.segment_id,
         status=status,
         method=method,
-        render_duration_seconds=duration,
+        render_duration_seconds=render_duration,
         tts_duration_seconds=duration,
         base_visual_duration_seconds=base_duration,
         min_band_seconds=min_band_seconds,
@@ -270,6 +274,8 @@ def _adaptation_method(
     duration_ratio: float,
     compression_applied: bool,
 ) -> TimingAdaptationMethod:
+    if status == "out_of_band" and duration_ratio < 1.0 / MOTION_SPEEDUP_LIMIT:
+        return "clamp_to_min_band"
     if status == "out_of_band" and duration_ratio > MOTION_STRETCH_LIMIT:
         return "hold_final_frame"
     if compression_applied:
@@ -290,9 +296,10 @@ def _allowed_compression_variants(original: str) -> dict[str, tuple[str, ...]]:
             applied_names: list[str] = []
             for index in indexes:
                 rule = ALLOWED_NARRATION_COMPRESSION_RULES[index]
-                if rule.source not in compressed:
+                next_compressed = _apply_compression_rule(compressed, rule)
+                if next_compressed is None:
                     continue
-                compressed = compressed.replace(rule.source, rule.replacement)
+                compressed = next_compressed
                 applied_names.append(rule.name)
             if not applied_names:
                 continue
@@ -302,8 +309,22 @@ def _allowed_compression_variants(original: str) -> dict[str, tuple[str, ...]]:
 
 
 def _normalize_narration(text: str) -> str:
-    collapsed = re.sub(r"\s+", " ", text.strip())
+    normalized = unicodedata.normalize("NFKC", text)
+    collapsed = re.sub(r"\s+", " ", normalized.strip())
     return re.sub(r"\s+([,.!?\uff0c\u3002])", r"\1", collapsed)
+
+
+def _apply_compression_rule(
+    compressed: str,
+    rule: NarrationCompressionRule,
+) -> str | None:
+    if rule.name.startswith("remove_leading_"):
+        if not compressed.startswith(rule.source):
+            return None
+        return f"{rule.replacement}{compressed.removeprefix(rule.source)}"
+    if rule.source not in compressed:
+        return None
+    return compressed.replace(rule.source, rule.replacement, 1)
 
 
 def _motion_scale(duration_ratio: float) -> float:
