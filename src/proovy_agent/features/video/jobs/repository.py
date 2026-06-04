@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 from typing import TYPE_CHECKING, Protocol
 import uuid
@@ -105,6 +105,22 @@ class VideoJobRepository(Protocol):
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         """Whether a user retry child already exists for the source job."""
 
+    async def acquire_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        attempt_id: str,
+        lease_stale_after_seconds: int,
+    ) -> VideoJob | None:
+        """Acquire or steal a stale worker lease; return None when another holder is alive."""
+
+    async def heartbeat_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        """Refresh the current worker lease without changing user-facing progress."""
+
+    async def release_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        """Release a lease held by the current worker instance."""
+
     async def update_progress(
         self,
         job_id: str,
@@ -188,6 +204,74 @@ class InMemoryVideoJobRepository:
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         async with self._lock:
             return any(job.retry_source_job_id == source_job_id for job in self._jobs.values())
+
+    async def acquire_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        attempt_id: str,
+        lease_stale_after_seconds: int,
+    ) -> VideoJob | None:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return None
+
+            current_time = now_utc()
+            lease_expires_before = current_time - timedelta(seconds=lease_stale_after_seconds)
+            lease_is_stale = (
+                job.progress_updated_at is None or job.progress_updated_at < lease_expires_before
+            )
+            same_holder = job.lease_holder_instance_id == instance_id
+            if job.lease_holder_instance_id is not None and not same_holder and not lease_is_stale:
+                return None
+
+            next_attempt_id = (
+                job.active_attempt_id
+                if same_holder and job.active_attempt_id is not None
+                else attempt_id
+            )
+            updated = _validated_job_update(
+                job,
+                {
+                    "status": VideoJobStatus.RUNNING,
+                    "lease_holder_instance_id": instance_id,
+                    "active_attempt_id": next_attempt_id,
+                    "progress_updated_at": current_time,
+                    "started_at": job.started_at or current_time,
+                },
+            )
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
+    async def heartbeat_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return None
+            if job.lease_holder_instance_id != instance_id:
+                return None
+
+            updated = _validated_job_update(job, {"progress_updated_at": now_utc()})
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
+    async def release_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.lease_holder_instance_id != instance_id:
+                return None
+
+            updated = _validated_job_update(
+                job,
+                {
+                    "lease_holder_instance_id": None,
+                    "progress_updated_at": now_utc(),
+                },
+            )
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
 
     async def update_progress(
         self,
@@ -380,6 +464,110 @@ class PostgresVideoJobRepository:
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         async with await self._connect() as conn:
             return await self._has_retry_for_source(conn, source_job_id)
+
+    async def acquire_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        attempt_id: str,
+        lease_stale_after_seconds: int,
+    ) -> VideoJob | None:
+        current_time = now_utc()
+        lease_expires_before = current_time - timedelta(seconds=lease_stale_after_seconds)
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET lease_holder_instance_id = %(instance_id)s,
+                    active_attempt_id = CASE
+                        WHEN lease_holder_instance_id = %(instance_id)s
+                             AND active_attempt_id IS NOT NULL
+                        THEN active_attempt_id
+                        ELSE %(attempt_id)s
+                    END,
+                    progress_updated_at = %(progress_updated_at)s,
+                    started_at = COALESCE(started_at, %(progress_updated_at)s),
+                    status = %(status)s
+                WHERE id = %(id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
+                  AND (
+                    lease_holder_instance_id IS NULL
+                    OR lease_holder_instance_id = %(instance_id)s
+                    OR progress_updated_at IS NULL
+                    OR progress_updated_at < %(lease_expires_before)s
+                  )
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "instance_id": instance_id,
+                    "attempt_id": attempt_id,
+                    "progress_updated_at": current_time,
+                    "lease_expires_before": lease_expires_before,
+                    "status": VideoJobStatus.RUNNING.value,
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                return _row_to_job(row)
+
+        existing = await self.get(job_id)
+        if existing is None:
+            raise VideoJobNotFoundError(job_id)
+        return None
+
+    async def heartbeat_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET progress_updated_at = %(progress_updated_at)s
+                WHERE id = %(id)s
+                  AND lease_holder_instance_id = %(instance_id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "instance_id": instance_id,
+                    "progress_updated_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                return _row_to_job(row)
+
+        existing = await self.get(job_id)
+        if existing is None:
+            raise VideoJobNotFoundError(job_id)
+        return None
+
+    async def release_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET lease_holder_instance_id = NULL,
+                    progress_updated_at = %(progress_updated_at)s
+                WHERE id = %(id)s
+                  AND lease_holder_instance_id = %(instance_id)s
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "instance_id": instance_id,
+                    "progress_updated_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                return _row_to_job(row)
+
+        existing = await self.get(job_id)
+        if existing is None:
+            raise VideoJobNotFoundError(job_id)
+        return None
 
     async def update_progress(
         self,

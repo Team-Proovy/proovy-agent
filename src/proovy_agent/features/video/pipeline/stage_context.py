@@ -30,7 +30,18 @@ class StageEvent:
     status: StageEventStatus
 
 
+@dataclass(frozen=True, slots=True)
+class SegmentProgressEvent:
+    """Observable segment completion event emitted by segment-oriented stages."""
+
+    stage: StageName
+    segment_id: str
+    segment_index: int
+    segment_total: int
+
+
 type StageProgressHandler = Callable[[StageEvent], Awaitable[None] | None]
+type SegmentProgressHandler = Callable[[SegmentProgressEvent], Awaitable[None] | None]
 
 
 @dataclass(slots=True)
@@ -50,7 +61,9 @@ class StageContext:
     sandbox: Any | None = None
     cancel_event: asyncio.Event | None = None
     progress_handler: StageProgressHandler | None = None
+    segment_progress_handler: SegmentProgressHandler | None = None
     stage_events: list[StageEvent] = field(default_factory=list)
+    segment_progress_events: list[SegmentProgressEvent] = field(default_factory=list)
     default_visual_type: str = "dry_run"
     dry_run_output_path: str = "dry-run.mp4"
 
@@ -61,6 +74,28 @@ class StageContext:
         if self.progress_handler is None:
             return
         maybe_awaitable = self.progress_handler(event)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+    async def emit_segment_progress(
+        self,
+        stage: StageName,
+        *,
+        segment_id: str,
+        segment_index: int,
+        segment_total: int,
+    ) -> None:
+        """Record and optionally forward one segment completion event."""
+        event = SegmentProgressEvent(
+            stage=stage,
+            segment_id=segment_id,
+            segment_index=segment_index,
+            segment_total=segment_total,
+        )
+        self.segment_progress_events.append(event)
+        if self.segment_progress_handler is None:
+            return
+        maybe_awaitable = self.segment_progress_handler(event)
         if inspect.isawaitable(maybe_awaitable):
             await maybe_awaitable
 

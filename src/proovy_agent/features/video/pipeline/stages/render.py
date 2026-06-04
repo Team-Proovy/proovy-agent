@@ -53,7 +53,8 @@ async def stage_render(
     )
     allow_job_emphasis_fallback = len(script.segments) == 1
     rendered_segments: list[RenderedSegment] = []
-    for segment in script.segments:
+    segment_total = len(script.segments)
+    for index, segment in enumerate(script.segments, start=1):
         tts_result = tts_by_segment_id[segment.segment_id]
         try:
             timing_adaptation = adapt_segment_timing(segment=segment, tts_result=tts_result)
@@ -92,6 +93,12 @@ async def stage_render(
                 duration_seconds=timing_adaptation.render_duration_seconds,
                 diagnostics=diagnostics,
             )
+        )
+        await ctx.emit_segment_progress(
+            StageName.RENDER,
+            segment_id=segment.segment_id,
+            segment_index=index,
+            segment_total=segment_total,
         )
     return rendered_segments
 

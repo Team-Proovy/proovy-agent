@@ -17,6 +17,7 @@ from proovy_agent.features.video.jobs import (
     create_video_artifact_url_resolver,
     create_video_job_client,
 )
+from proovy_agent.features.video.worker.http_handler import router as video_worker_router
 from proovy_agent.graph.builder import build_graph
 
 
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     # 백엔드(Proovy-server) 연동 계약 — prefix 없이 root에 /stream/v2, /health 노출.
     # 배포 ingress가 https://.../ai/* → 앱 /* 매핑한다고 가정.
     app.include_router(stream_router)
+    app.include_router(video_worker_router, tags=["video_worker"])
 
     return app
 
