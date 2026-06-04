@@ -202,26 +202,27 @@ class OCRNode:
                     original_command = pattern.replace("@command: ", "").strip()
                     original_commands.append(original_command)
 
-            # CommandTag 생성 - 안전한 매핑 방식 사용
+            # CommandTag 생성 - 각 태그별로 CommandTag 생성 (인덱스 매핑 제거)
             command_tags = []
-            # original_commands를 기준으로 CommandTag 생성
-            # tags 매핑은 단순화하여 안전성 확보
-            for idx, original_command in enumerate(original_commands):
-                # 태그 매핑을 단순화 - 인덱스 충돌 방지
-                if idx < len(command_result.tags):
-                    tag = command_result.tags[idx]
-                else:
-                    # 매핑 실패시 원문에서 추정
-                    if original_command.startswith("@"):
-                        tag = original_command[1:].split()[0] if " " in original_command else original_command[1:]
-                    else:
-                        tag = "unknown"
+            # 모든 태그에 대해 CommandTag 생성
+            for tag in command_result.tags:
+                # 해당 태그를 생성한 원본 커맨드 찾기
+                original_text = "@unknown"  # 기본값
+
+                # detected_patterns에서 @command로 시작하는 것 찾기
+                for pattern in command_result.detected_patterns:
+                    if pattern.startswith("@command: "):
+                        candidate_command = pattern.replace("@command: ", "").strip()
+                        # 이 커맨드에서 현재 태그가 나올 수 있는지 추정
+                        if self._tag_could_come_from_command(tag, candidate_command):
+                            original_text = candidate_command
+                            break
 
                 command_tags.append(CommandTag(
                     command=tag,
-                    original_text=original_command,
+                    original_text=original_text,
                     confidence=command_result.confidence,
-                    position=0,  # 위치 정보는 단순화
+                    position=0,
                 ))
 
             # @커맨드 제거된 텍스트로 통일성 유지
@@ -281,6 +282,30 @@ class OCRNode:
                 {"data_length": len(image_data)},
                 "지원되는 이미지 형식(.jpg, .png, .gif 등)인지 확인해주세요",
             ) from e
+
+    def _tag_could_come_from_command(self, tag: str, command: str) -> bool:
+        """태그가 주어진 커맨드에서 나올 수 있는지 추정하는 헬퍼 메서드"""
+        command_lower = command.lower()
+
+        # 태그 타입별 커맨드 패턴 매핑
+        tag_command_mapping = {
+            "term": ["@용어", "@영어"],
+            "video": ["@해설영상", "@영상", "@동영상"],
+            "pdf": ["@해설지", "@pdf", "@문서"],
+            "solve": ["@풀이", "@해결", "@단계별"],
+            "detailed": ["@풀이", "@해결", "@단계별", "@자세"],  # solve와 함께 나오는 태그
+        }
+
+        # 복합 태그 처리 (예: "term:기각역")
+        if ":" in tag:
+            tag_type = tag.split(":")[0]
+        else:
+            tag_type = tag
+
+        if tag_type in tag_command_mapping:
+            return any(cmd.lower() in command_lower for cmd in tag_command_mapping[tag_type])
+
+        return False  # 알 수 없는 태그는 False
 
     def _convert_to_state_update(self, ocr_result: OCRResult) -> dict[str, Any]:
         """OCRResult를 ProovyState 업데이트 형태로 변환."""
