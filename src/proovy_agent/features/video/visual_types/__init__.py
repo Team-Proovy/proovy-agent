@@ -10,9 +10,11 @@ from proovy_agent.features.video.visual_types.registry import (
     VisualTypeDefinition,
     VisualTypeRegistry,
 )
+from proovy_agent.features.video.visual_types.templates import DeterministicTemplateRender
 
 __all__ = [
     "PHASE_A_DETERMINISTIC_VISUAL_TYPES",
+    "DeterministicTemplateRender",
     "RenderFunction",
     "VisualTypeDefinition",
     "VisualTypeRegistry",
