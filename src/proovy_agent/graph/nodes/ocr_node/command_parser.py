@@ -16,12 +16,12 @@ from .exceptions import CommandParsingError
 class TagType(StrEnum):
     """태그 타입 정의"""
 
-    TERM = "term"          # 용어 설명
-    VIDEO = "video"        # 해설 영상
-    PDF = "pdf"           # 해설지 생성
-    SOLVE = "solve"       # 문제 풀이
-    DETAILED = "detailed" # 상세 설명
-    PROBLEM = "problem"   # 문제 번호
+    TERM = "term"  # 용어 설명
+    VIDEO = "video"  # 해설 영상
+    PDF = "pdf"  # 해설지 생성
+    SOLVE = "solve"  # 문제 풀이
+    DETAILED = "detailed"  # 상세 설명
+    PROBLEM = "problem"  # 문제 번호
 
 
 class ParsedCommand(BaseModel):
@@ -46,17 +46,14 @@ class CommandParser:
             # 용어 설명 커맨드
             r"@용어\s+([가-힣a-zA-Z0-9]+(?:\s+[가-힣a-zA-Z0-9]+)*)": self._create_term_tag,
             r"@영어\s+([가-힣a-zA-Z0-9]+(?:\s+[가-힣a-zA-Z0-9]+)*)": self._create_term_tag,  # 오타 허용
-
             # 해설영상 커맨드
             r"@해설영상\s*([^@]*)": self._create_video_tag,
             r"@해설동영상\s*([^@]*)": self._create_video_tag,  # 변형 허용
             r"@영상\s*([^@]*)": self._create_video_tag,
-
             # 해설지 생성 커맨드
             r"@해설지\s*생성": self._create_pdf_tag,
             r"@PDF\s*생성": self._create_pdf_tag,
             r"@파일\s*생성": self._create_pdf_tag,
-
             # 풀이 과정 커맨드
             r"@풀이\s*과정": self._create_solve_tag,
             r"@해결\s*과정": self._create_solve_tag,
@@ -80,8 +77,8 @@ class CommandParser:
                     r"([가-힣a-zA-Z0-9]+)의?\s*의미",
                     r"([가-힣a-zA-Z0-9]+)을?\s*설명해",
                     r"([가-힣a-zA-Z0-9]+)에?\s*대해\s*알려줘",
-                    r"([가-힣a-zA-Z0-9]+)의?\s*정의"
-                ]
+                    r"([가-힣a-zA-Z0-9]+)의?\s*정의",
+                ],
             },
             TagType.VIDEO: {
                 "keywords": ["영상", "동영상", "해설영상", "설명영상", "비디오"],  # 범용 동사 제거
@@ -89,8 +86,8 @@ class CommandParser:
                     r"영상으?로?\s*(만들어|보여줘|설명해)",
                     r"(해설영상|동영상)\s*(만들어|생성해)",
                     r"비디오로?\s*설명해",
-                    r"(영상|동영상|비디오)\s*(제작|생성)"
-                ]
+                    r"(영상|동영상|비디오)\s*(제작|생성)",
+                ],
             },
             TagType.PDF: {
                 "keywords": ["해설지", "PDF"],  # 범용 키워드 제거
@@ -98,8 +95,8 @@ class CommandParser:
                     r"PDF로?\s*(저장|만들어|생성)",
                     r"해설지\s*(만들어|생성|저장)",
                     r"파일로?\s*(저장|다운로드)",
-                    r"(문서|파일)\s*형태로?\s*(저장|생성)"
-                ]
+                    r"(문서|파일)\s*형태로?\s*(저장|생성)",
+                ],
             },
             TagType.SOLVE: {
                 "keywords": ["풀이"],  # 범용 키워드 제거
@@ -107,17 +104,16 @@ class CommandParser:
                     r"문제를?\s*(풀어|해결해)",
                     r"(풀이|해결)\s*과정",
                     r"단계별로?\s*(풀어|해결)",
-                    r"이\s*문제를?\s*(계산|해결)"
-                ]
-            }
+                    r"이\s*문제를?\s*(계산|해결)",
+                ],
+            },
         }
 
         # 컴파일된 의도 패턴
         self.intent_compiled = {}
         for tag_type, data in self.intent_keywords.items():
             self.intent_compiled[tag_type] = [
-                re.compile(pattern, re.IGNORECASE)
-                for pattern in data["patterns"]
+                re.compile(pattern, re.IGNORECASE) for pattern in data["patterns"]
             ]
 
     def parse(self, text: str | None) -> ParsedCommand:
@@ -163,9 +159,7 @@ class CommandParser:
                     continue
 
         return ParsedCommand(
-            tags=tags,
-            confidence=min(confidence, 1.0),
-            detected_patterns=detected_patterns
+            tags=tags, confidence=min(confidence, 1.0), detected_patterns=detected_patterns
         )
 
     def _analyze_natural_intent(self, text: str) -> ParsedCommand:
@@ -200,9 +194,7 @@ class CommandParser:
         confidence += self._analyze_keywords(text, tags)
 
         return ParsedCommand(
-            tags=tags,
-            confidence=min(confidence, 1.0),
-            detected_patterns=detected_patterns
+            tags=tags, confidence=min(confidence, 1.0), detected_patterns=detected_patterns
         )
 
     def _analyze_keywords(self, text: str, current_tags: list[str]) -> float:
@@ -215,26 +207,18 @@ class CommandParser:
 
         if has_pattern_match:
             for tag_type, data in self.intent_keywords.items():
-                keyword_count = sum(
-                    1 for keyword in data["keywords"]
-                    if keyword in text_lower
-                )
+                keyword_count = sum(1 for keyword in data["keywords"] if keyword in text_lower)
 
                 if keyword_count > 0:
                     # 패턴 매칭으로 이미 태그가 있는 경우에만 신뢰도 보정
-                    tag_exists = any(
-                        tag.startswith(tag_type.value) for tag in current_tags
-                    )
+                    tag_exists = any(tag.startswith(tag_type.value) for tag in current_tags)
                     if tag_exists:
                         confidence_boost += keyword_count * 0.1
 
         return confidence_boost
 
     def _merge_results(
-        self,
-        command_result: ParsedCommand,
-        intent_result: ParsedCommand,
-        original_text: str
+        self, command_result: ParsedCommand, intent_result: ParsedCommand, original_text: str
     ) -> ParsedCommand:
         """결과 병합 및 우선순위 적용"""
         # 태그 중복 제거 및 우선순위 적용
@@ -255,7 +239,7 @@ class CommandParser:
             tags=unique_tags,
             confidence=min(final_confidence, 1.0),
             original_text=original_text,
-            detected_patterns=command_result.detected_patterns + intent_result.detected_patterns
+            detected_patterns=command_result.detected_patterns + intent_result.detected_patterns,
         )
 
     def _deduplicate_tags(self, tags: list[str]) -> list[str]:
@@ -287,7 +271,7 @@ class CommandParser:
                     term_tags.append(tag)
                     result.append(tag)
             else:
-                base_tag = tag.split(':')[0]
+                base_tag = tag.split(":")[0]
                 if base_tag not in seen:
                     result.append(tag)
                     seen.add(base_tag)
@@ -297,10 +281,10 @@ class CommandParser:
     def _extract_problem_number(self, text: str) -> str | None:
         """문제 번호 추출 - 문맥이 있는 경우만 인식"""
         patterns = [
-            r"(\d+)번\s*문제",     # "2번 문제"
-            r"문제\s*(\d+)번?",    # "문제 3번"
-            r"#(\d+)번?\s*문제",   # "#7번 문제"
-            r"#(\d+)",            # "#7"
+            r"(\d+)번\s*문제",  # "2번 문제"
+            r"문제\s*(\d+)번?",  # "문제 3번"
+            r"#(\d+)번?\s*문제",  # "#7번 문제"
+            r"#(\d+)",  # "#7"
             # 단독 "(\d+)번" 패턴 제거 - 오탐 방지
         ]
 

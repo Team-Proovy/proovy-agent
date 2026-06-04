@@ -10,13 +10,24 @@
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from langgraph.graph.state import CompiledStateGraph
 
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.emitter import SSEEmitter
 from proovy_agent.common.sse.events import DonePayload, ErrorPayload
+from proovy_agent.graph.runtime import (
+    ActiveHoldTrackingCreditLedgerClient,
+    current_credit_ledger_client,
+    current_video_job_client,
+    track_active_credit_hold,
+)
 from proovy_agent.graph.state import ProovyState
+
+if TYPE_CHECKING:
+    from proovy_agent.features.credits.service import CreditLedgerClient
+    from proovy_agent.features.video.jobs import VideoJobClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +40,51 @@ SSE_PING_INTERVAL: int = 15
 _active_tasks: set[asyncio.Task[None]] = set()
 
 
-def start_graph_task(state: ProovyState, graph: CompiledStateGraph) -> SSEEmitter:
+async def _release_active_credit_hold(
+    ledger: ActiveHoldTrackingCreditLedgerClient | None,
+    user_id: str,
+) -> None:
+    if ledger is None or ledger.active_hold_id is None:
+        return
+
+    hold_id = ledger.active_hold_id
+    try:
+        await ledger.release_active_hold(user_id)
+    except Exception:
+        logger.exception("그래프 실패 후 pending credit hold release 실패: hold_id=%s", hold_id)
+
+
+async def cancel_active_graph_tasks() -> None:
+    """Cancel and await in-flight graph tasks before shared clients close."""
+    current_task = asyncio.current_task()
+    tasks = [task for task in _active_tasks if task is not current_task and not task.done()]
+    if not tasks:
+        return
+
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def start_graph_task(
+    state: ProovyState,
+    graph: CompiledStateGraph,
+    *,
+    credit_ledger_client: "CreditLedgerClient | None" = None,
+    video_job_client: "VideoJobClient | None" = None,
+) -> SSEEmitter:
     """그래프 풀이를 fire-and-forget 태스크로 시작하고 이벤트 수집용 emitter를 반환한다.
 
     호출부는 반환된 emitter의 `stream()`으로 SSE 응답을 만든다(직렬화기 선택은 호출부
     책임). 그래프 태스크는 SSE 연결과 독립적이라 disconnect 시에도 끝까지 실행된다.
     """
     emitter = SSEEmitter(thread_id=state.thread_id)
+    tracked_credit_ledger_client = track_active_credit_hold(credit_ledger_client)
 
     async def _run() -> None:
-        token = current_emitter.set(emitter)
+        emitter_token = current_emitter.set(emitter)
+        credit_token = current_credit_ledger_client.set(tracked_credit_ledger_client)
+        video_token = current_video_job_client.set(video_job_client)
         try:
             # 체크포인트 키를 user_id로 네임스페이스해 타 사용자 thread_id 접근을 차단.
             # user_id 인증 자체는 상위 게이트웨이/BFF 책임 (여기선 신뢰 가정).
@@ -51,14 +97,18 @@ def start_graph_task(state: ProovyState, graph: CompiledStateGraph) -> SSEEmitte
             await emitter.emit(DonePayload())
         except asyncio.CancelledError:
             # 클라이언트 연결 종료 — done/error 둘 다 보내지 않는다
+            await _release_active_credit_hold(tracked_credit_ledger_client, state.user_id)
             logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
         except Exception as exc:
             logger.exception("solve 실행 중 오류 발생")
+            await _release_active_credit_hold(tracked_credit_ledger_client, state.user_id)
             if not getattr(exc, "sse_emitted", False):
                 await emitter.emit(ErrorPayload(message="풀이 중 오류가 발생했습니다."))
         finally:
             await emitter.close()
-            current_emitter.reset(token)
+            current_video_job_client.reset(video_token)
+            current_credit_ledger_client.reset(credit_token)
+            current_emitter.reset(emitter_token)
 
     # 그래프 태스크는 SSE 연결과 독립적으로 실행 — disconnect 시에도 풀이가 완료됨
     task: asyncio.Task[None] = asyncio.create_task(_run())

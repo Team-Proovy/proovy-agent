@@ -19,6 +19,12 @@ from proovy_agent.features.credits.models import (
     normalize_credit_amount,
 )
 from proovy_agent.features.credits.schema import setup_credit_ledger
+from proovy_agent.features.credits.service import (
+    CreditLedgerClient,
+    PostgresCreditLedgerClient,
+    create_credit_ledger_client,
+    open_credit_ledger_client,
+)
 
 __all__ = [
     "CreditAccountNotFoundError",
@@ -30,10 +36,14 @@ __all__ = [
     "CreditHoldNotPendingError",
     "CreditHoldStatus",
     "CreditLedger",
+    "CreditLedgerClient",
     "CreditLedgerError",
     "CreditRefundResult",
     "InsufficientCreditsError",
     "InvalidCreditAmountError",
+    "PostgresCreditLedgerClient",
+    "create_credit_ledger_client",
     "normalize_credit_amount",
+    "open_credit_ledger_client",
     "setup_credit_ledger",
 ]

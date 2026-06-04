@@ -103,7 +103,7 @@ class TestNaturalLanguageIntent:
             "기각역이 뭐야?",
             "삼각함수란 무엇인가요?",
             "미분의 의미를 설명해주세요",
-            "적분에 대해 알려줘"
+            "적분에 대해 알려줘",
         ]
 
         for text in test_cases:
@@ -118,7 +118,7 @@ class TestNaturalLanguageIntent:
             "영상으로 설명해줘",
             "해설영상 만들어주세요",
             "동영상으로 보여줘",
-            "비디오로 설명해"
+            "비디오로 설명해",
         ]
 
         for text in test_cases:
@@ -127,11 +127,7 @@ class TestNaturalLanguageIntent:
 
     def test_pdf_intent(self):
         """PDF 생성 의도 테스트"""
-        test_cases = [
-            "PDF로 저장해줘",
-            "해설지 만들어주세요",
-            "파일로 다운로드하고 싶어요"
-        ]
+        test_cases = ["PDF로 저장해줘", "해설지 만들어주세요", "파일로 다운로드하고 싶어요"]
 
         for text in test_cases:
             result = self.parser.parse(text)
@@ -139,11 +135,7 @@ class TestNaturalLanguageIntent:
 
     def test_solve_intent(self):
         """문제 풀이 의도 테스트"""
-        test_cases = [
-            "이 문제를 풀어주세요",
-            "풀이 과정을 보여줘",
-            "단계별로 해결해주세요"
-        ]
+        test_cases = ["이 문제를 풀어주세요", "풀이 과정을 보여줘", "단계별로 해결해주세요"]
 
         for text in test_cases:
             result = self.parser.parse(text)
@@ -301,9 +293,9 @@ class TestRegressionCases:
     def test_false_positive_keywords(self):
         """범용 키워드 오탐 방지 테스트"""
         false_positive_cases = [
-            "숙제 만들어줘",           # "만들어" 단독으로는 video 태그 안생성
-            "정답 알려줘",            # "알려줘" 단독으로는 term 태그 안생성
-            "파일을 다운로드하고 싶어요", # "파일", "다운로드" 단독으로는 pdf 태그 안생성
+            "숙제 만들어줘",  # "만들어" 단독으로는 video 태그 안생성
+            "정답 알려줘",  # "알려줘" 단독으로는 term 태그 안생성
+            "파일을 다운로드하고 싶어요",  # "파일", "다운로드" 단독으로는 pdf 태그 안생성
         ]
 
         for text in false_positive_cases:
@@ -329,7 +321,7 @@ class TestRegressionCases:
             "1번째로 중요한 것은",
             "다음번에 해보자",
             "10번 버스를 타세요",
-            "3번 반복해보세요"
+            "3번 반복해보세요",
         ]
 
         for text in false_positive_cases:
@@ -384,18 +376,18 @@ class TestIntegration:
             {
                 "text": "삼각함수 문제 2번을 영상으로 설명해주세요",
                 "expected_tags": ["video", "problem:2"],
-                "expected_intents": ["video", "problem"]
+                "expected_intents": ["video", "problem"],
             },
             {
                 "text": "@용어 기각역 @해설지 생성",
                 "expected_tags": ["term:기각역", "pdf"],
-                "expected_intents": ["term", "pdf"]
+                "expected_intents": ["term", "pdf"],
             },
             {
                 "text": "이 문제를 풀어주고 PDF로 저장해줘",
                 "expected_tags": ["solve", "pdf"],
-                "expected_intents": ["solve", "pdf"]
-            }
+                "expected_intents": ["solve", "pdf"],
+            },
         ]
 
         for scenario in scenarios:
