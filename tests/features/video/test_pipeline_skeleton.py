@@ -337,6 +337,78 @@ async def test_stage_render_syncs_emphasis_and_subtitles_from_tts_word_timestamp
     ]
 
 
+async def test_stage_render_records_tts_first_adaptation_diagnostics() -> None:
+    script = VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="equation_write",
+                narration="양변에 3을 더합니다.",
+                params={
+                    "latex_expression": "x = 5",
+                    "visual_description": "핵심 식을 한 줄로 표시합니다.",
+                },
+            )
+        ],
+    )
+
+    rendered_segments = await stage_render(
+        script,
+        [
+            SegmentTTSResult(
+                segment_id="step-1",
+                narration="양변에 3을 더합니다.",
+                duration_seconds=3.0,
+            )
+        ],
+        job=_job(_sample_plan()),
+        ctx=StageContext(),
+    )
+
+    adaptation = rendered_segments[0].diagnostics["tts_first_adaptation"]
+    assert rendered_segments[0].duration_seconds == 3.0
+    assert adaptation["status"] == "converged"
+    assert adaptation["method"] == "stretch_motion"
+    assert adaptation["converged"] is True
+    assert adaptation["used_resynthesis"] is False
+    assert adaptation["compression"]["allowed"] is True
+    assert adaptation["compression"]["compression_applied"] is False
+
+
+async def test_stage_render_rejects_tts_narration_changes_outside_whitelist() -> None:
+    script = VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="equation_write",
+                narration="양변에 3을 더합니다.",
+                params={
+                    "latex_expression": "x = 5",
+                    "visual_description": "핵심 식을 한 줄로 표시합니다.",
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidStageOutputError, match="allowed compression policy"):
+        await stage_render(
+            script,
+            [
+                SegmentTTSResult(
+                    segment_id="step-1",
+                    narration="정답은 x=5입니다.",
+                    duration_seconds=2.4,
+                )
+            ],
+            job=_job(_sample_plan()),
+            ctx=StageContext(),
+        )
+
+
 async def test_stage_render_uses_segment_scoped_emphasis_targets_for_multi_segment_video() -> None:
     script = VideoScript(
         title="일차방정식",
