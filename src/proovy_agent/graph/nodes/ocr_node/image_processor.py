@@ -367,10 +367,7 @@ class ImageProcessor:
         return Image.fromarray(binary)
 
     async def _create_processed_image(
-        self,
-        image: Image.Image,
-        options: ProcessingOptions,
-        quality: ImageQuality
+        self, image: Image.Image, options: ProcessingOptions, quality: ImageQuality
     ) -> ProcessedImage:
         """Create ProcessedImage object with metadata."""
         import io
@@ -398,7 +395,7 @@ class ImageProcessor:
             width=image.width,
             height=image.height,
             dpi=quality.resolution_dpi,
-            preprocessing_applied=preprocessing_applied
+            preprocessing_applied=preprocessing_applied,
         )
 
     async def create_multiple_versions(self, image: Image.Image) -> dict[str, ProcessedImage]:

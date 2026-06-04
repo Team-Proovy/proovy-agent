@@ -7,8 +7,11 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from decimal import Decimal
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
@@ -18,6 +21,7 @@ import pytest
 from proovy_agent.app import main
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import PageStartPayload, TokenPayload
+from proovy_agent.graph.runtime import current_credit_ledger_client
 from proovy_agent.graph.state import PlanStep
 
 
@@ -54,6 +58,35 @@ class _ScriptedGraph:
         for payload in self._payloads:
             await emitter.emit(payload)
         return {}
+
+
+class _FakeCreditLedger:
+    def __init__(self, hold_id: UUID | None = None) -> None:
+        self.hold_id = hold_id or uuid4()
+        self.hold_calls: list[tuple[str, Decimal, str | None]] = []
+        self.release_calls: list[tuple[str, UUID]] = []
+
+    async def hold(
+        self,
+        user_id: str,
+        amount: Decimal,
+        *,
+        plan_id: str | None = None,
+    ) -> SimpleNamespace:
+        self.hold_calls.append((user_id, amount, plan_id))
+        return SimpleNamespace(id=self.hold_id)
+
+    async def finalize_hold(
+        self,
+        user_id: str,
+        hold_id: UUID,
+        actual_amount: Decimal,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(id=hold_id, amount=actual_amount)
+
+    async def release_hold(self, user_id: str, hold_id: UUID) -> SimpleNamespace:
+        self.release_calls.append((user_id, hold_id))
+        return SimpleNamespace(id=hold_id, amount=Decimal("0"))
 
 
 @pytest.fixture()
@@ -170,6 +203,32 @@ def test_stream_v2_graph_exception_maps_to_run_failed(client: TestClient) -> Non
     assert "run.completed" not in events
     assert frames[-1]["data"]["message"] == "풀이 중 오류가 발생했습니다."
     assert frames[-1]["data"]["thread_id"] == "th-1"
+
+
+def test_stream_v2_releases_active_hold_on_graph_exception() -> None:
+    """stream/v2도 공용 runner를 통해 pending hold를 즉시 release한다."""
+    ledger = _FakeCreditLedger()
+    app = main.create_app()
+    app.state.credit_ledger_client = ledger
+
+    class _HoldThenBoomGraph:
+        async def ainvoke(self, _state: object, config: object | None = None) -> dict:
+            runtime_ledger = current_credit_ledger_client.get()
+            assert runtime_ledger is not None
+            await runtime_ledger.hold("u", Decimal("20"), plan_id="th-1")
+            raise RuntimeError("boom")
+
+    test_client = TestClient(app)
+    with patch("proovy_agent.app.api.stream.get_graph", return_value=_HoldThenBoomGraph()):
+        response = test_client.post(
+            "/stream/v2", json={"message": "q", "userId": "u", "threadId": "th-1"}
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse(response.text)
+    assert [f["event"] for f in frames] == ["run.failed"]
+    assert ledger.hold_calls == [("u", Decimal("20"), "th-1")]
+    assert ledger.release_calls == [("u", ledger.hold_id)]
 
 
 def test_stream_v2_user_id_with_colon_returns_422(client: TestClient) -> None:

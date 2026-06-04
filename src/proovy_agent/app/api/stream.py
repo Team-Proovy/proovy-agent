@@ -10,7 +10,7 @@
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from langchain_core.messages import HumanMessage
 from sse_starlette.sse import EventSourceResponse
 
@@ -45,9 +45,14 @@ def _build_initial_state(payload: StreamInput) -> ProovyState:
 
 
 @router.post("/stream/v2", response_class=EventSourceResponse)
-async def stream_v2(payload: StreamInput) -> EventSourceResponse:
+async def stream_v2(payload: StreamInput, http_request: Request) -> EventSourceResponse:
     """백엔드 계약(`/stream/v2`)으로 문제 풀이를 SSE 스트리밍한다."""
     state = _build_initial_state(payload)
-    emitter = start_graph_task(state, get_graph())
+    emitter = start_graph_task(
+        state,
+        get_graph(),
+        credit_ledger_client=getattr(http_request.app.state, "credit_ledger_client", None),
+        video_job_client=getattr(http_request.app.state, "video_job_client", None),
+    )
     # 백엔드 vocab으로 직렬화 — 내부 전용 이벤트는 to_stream_v2가 None으로 drop
     return EventSourceResponse(emitter.stream(serializer=to_stream_v2), ping=SSE_PING_INTERVAL)

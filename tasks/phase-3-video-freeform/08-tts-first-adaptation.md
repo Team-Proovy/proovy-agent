@@ -7,7 +7,8 @@ issue: "98"
 depends_on: ["1.09", "1.06"]
 blocks: []
 estimate: "S"
-status: "todo"
+status: "done"
+completed_at: 2026-06-03
 owner: ""
 sprint: ""
 ---
@@ -25,17 +26,17 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] PoC §5.3~5.5 TTS-first 양방향 적응 재확인
+- [x] PoC §5.3~5.5 TTS-first 양방향 적응 재확인
 
 ## 구현 체크리스트
 
-- [ ] TTS-first 양방향 적응 (미세 동작, 압축 화이트리스트, narration 길이 band)
-- [ ] band 밖일 때 처리 (speakingRate 재합성은 Phase D 보류)
+- [x] TTS-first 양방향 적응 (미세 동작, 압축 화이트리스트, narration 길이 band)
+- [x] band 밖일 때 처리 (speakingRate 재합성은 Phase D 보류)
 
 ## Definition of Done
 
-- [ ] narration 길이 band 내 수렴 + 압축 화이트리스트 적용
-- [ ] 자동화된 테스트 통과
+- [x] narration 길이 band 내 수렴 + 압축 화이트리스트 적용
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 

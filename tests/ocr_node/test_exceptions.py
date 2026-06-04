@@ -101,9 +101,7 @@ class TestFileConversionError:
 
     def test_custom_message(self):
         """Test file conversion error with custom message."""
-        error = FileConversionError(
-            "docx", "지원하지 않는 문서 형식입니다", {"version": "2003"}
-        )
+        error = FileConversionError("docx", "지원하지 않는 문서 형식입니다", {"version": "2003"})
 
         error_str = str(error)
         assert "지원하지 않는 문서 형식입니다" in error_str
@@ -237,9 +235,7 @@ class TestOCRTimeoutError:
 
     def test_custom_message(self):
         """Test timeout error with custom message."""
-        error = OCRTimeoutError(
-            60.0, "대용량 이미지 처리 시간 초과", {"image_size": "50MB"}
-        )
+        error = OCRTimeoutError(60.0, "대용량 이미지 처리 시간 초과", {"image_size": "50MB"})
 
         error_str = str(error)
         assert "대용량 이미지 처리 시간 초과" in error_str

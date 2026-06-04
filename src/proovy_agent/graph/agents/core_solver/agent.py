@@ -17,6 +17,7 @@ from proovy_agent.common.sandbox.executor_var import current_executor
 from proovy_agent.common.sandbox.manager import SandboxManager
 from proovy_agent.common.sse.context import current_emitter, current_tool_call_id
 from proovy_agent.common.sse.events import ErrorPayload, SolveProgressPayload, TokenPayload
+from proovy_agent.graph.credit_pricing import CORE_SOLVER_MAX_ITERATIONS, MODEL_CREDIT_COST
 from proovy_agent.graph.state import CreditEntry, PlanStep, ProovyState
 from proovy_agent.graph.tools.code_execute import code_execute
 from proovy_agent.graph.tools.code_generate import code_generate
@@ -25,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 _TOOLS = [code_generate, code_execute]
 
-_MODEL_COST: dict[str, float] = {"flash": 1.0, "sonnet": 3.0, "opus": 8.0}
-_MAX_ITERATIONS = 5
+_MAX_ITERATIONS = CORE_SOLVER_MAX_ITERATIONS
 _TRIM_THRESHOLD = 500
 _phase1_execute_count: ContextVar[int] = ContextVar("phase1_execute_count", default=0)
 
@@ -413,7 +413,7 @@ async def core_solver(state: ProovyState) -> dict:
             new_messages.append(explain_msg)
 
         # 크레딧: Phase 1 LLM 반복 횟수
-        model_cost = _MODEL_COST.get(state.selected_model, 1.0)
+        model_cost = float(MODEL_CREDIT_COST.get(state.selected_model, MODEL_CREDIT_COST["flash"]))
         credit_entries.append(
             CreditEntry(
                 node="core_solver",

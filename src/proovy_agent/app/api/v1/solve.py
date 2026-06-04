@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from langchain_core.messages import HumanMessage
 from sse_starlette.sse import EventSourceResponse
 
@@ -29,7 +29,7 @@ def _build_initial_state(request: SolveRequest) -> ProovyState:
 
 
 @router.post("/solve", response_class=EventSourceResponse)
-async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
+async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventSourceResponse:
     """수학 문제를 SSE로 스트리밍하며 풀이합니다.
 
     그래프 실행은 _runner.start_graph_task가 담당하며(SSE 연결과 독립된 fire-and-forget
@@ -37,6 +37,11 @@ async def solve_endpoint(request: SolveRequest) -> EventSourceResponse:
     포맷은 /stream/v2 참고.
     """
     state = _build_initial_state(request)
-    emitter = start_graph_task(state, get_graph())
+    emitter = start_graph_task(
+        state,
+        get_graph(),
+        credit_ledger_client=getattr(http_request.app.state, "credit_ledger_client", None),
+        video_job_client=getattr(http_request.app.state, "video_job_client", None),
+    )
     # 유휴 구간 프록시 idle 타임아웃 방지 + SSE 연결 끊김 시 스트림 종료.
     return EventSourceResponse(emitter.stream(), ping=_SSE_PING_INTERVAL)

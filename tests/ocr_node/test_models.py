@@ -136,10 +136,7 @@ class TestCommandTag:
     def test_valid_command_tag(self):
         """Test valid command tag creation."""
         tag = CommandTag(
-            command="solve",
-            original_text="@solve this equation",
-            confidence=0.9,
-            position=5
+            command="solve", original_text="@solve this equation", confidence=0.9, position=5
         )
 
         assert tag.command == "solve"
@@ -162,11 +159,7 @@ class TestMathExpression:
 
     def test_valid_expression(self):
         """Test valid math expression creation."""
-        expr = MathExpression(
-            latex="x^2 + 2x + 1",
-            original="x² + 2x + 1",
-            position=(10, 20)
-        )
+        expr = MathExpression(latex="x^2 + 2x + 1", original="x² + 2x + 1", position=(10, 20))
 
         assert expr.latex == "x^2 + 2x + 1"
         assert expr.original == "x² + 2x + 1"
@@ -193,9 +186,7 @@ class TestOCRRequest:
         """Test valid OCR request creation."""
         raw_input = {"type": "image", "data": "base64_encoded_image"}
 
-        request = OCRRequest(
-            raw_input=raw_input, user_id="user123", thread_id="thread456"
-        )
+        request = OCRRequest(raw_input=raw_input, user_id="user123", thread_id="thread456")
 
         assert request.raw_input == raw_input
         assert request.user_id == "user123"
@@ -231,15 +222,13 @@ class TestOCRResult:
         command_tag = CommandTag(
             command="solve", original_text="@solve", confidence=0.9, position=0
         )
-        math_expr = MathExpression(
-            latex="x = 5", original="x = 5", position=(10, 15)
-        )
+        math_expr = MathExpression(latex="x = 5", original="x = 5", position=(10, 15))
         metadata = ProcessingMetadata(
             total_processing_time=2.5,
             model_used="flash",
             pages_processed=1,
             quality_score=0.9,
-            language_detected="ko"
+            language_detected="ko",
         )
 
         result = OCRResult(
@@ -265,15 +254,12 @@ class TestOCRResult:
             model_used="flash",
             pages_processed=1,
             quality_score=0.5,
-            language_detected="en"
+            language_detected="en",
         )
 
         with pytest.raises(ValidationError, match="추출된 텍스트가 비어있습니다"):
             OCRResult(
-                extracted_text="",
-                confidence=0.9,
-                language="en",
-                processing_metadata=metadata
+                extracted_text="", confidence=0.9, language="en", processing_metadata=metadata
             )
 
         with pytest.raises(ValidationError, match="추출된 텍스트가 비어있습니다"):
@@ -281,7 +267,7 @@ class TestOCRResult:
                 extracted_text="   ",  # Only whitespace
                 confidence=0.9,
                 language="en",
-                processing_metadata=metadata
+                processing_metadata=metadata,
             )
 
     def test_confidence_bounds(self):
@@ -291,16 +277,24 @@ class TestOCRResult:
             model_used="flash",
             pages_processed=1,
             quality_score=0.5,
-            language_detected="en"
+            language_detected="en",
         )
 
         # Valid range
-        OCRResult(extracted_text="test", confidence=0.0, language="en", processing_metadata=metadata)
-        OCRResult(extracted_text="test", confidence=1.0, language="en", processing_metadata=metadata)
+        OCRResult(
+            extracted_text="test", confidence=0.0, language="en", processing_metadata=metadata
+        )
+        OCRResult(
+            extracted_text="test", confidence=1.0, language="en", processing_metadata=metadata
+        )
 
         # Invalid range
         with pytest.raises(ValidationError):
-            OCRResult(extracted_text="test", confidence=-0.1, language="en", processing_metadata=metadata)
+            OCRResult(
+                extracted_text="test", confidence=-0.1, language="en", processing_metadata=metadata
+            )
 
         with pytest.raises(ValidationError):
-            OCRResult(extracted_text="test", confidence=1.1, language="en", processing_metadata=metadata)
+            OCRResult(
+                extracted_text="test", confidence=1.1, language="en", processing_metadata=metadata
+            )

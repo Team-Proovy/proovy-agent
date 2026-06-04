@@ -54,8 +54,17 @@ def test_app_lifespan_initializes_and_closes_daytona(
         """Record shutdown cleanup."""
         calls.append("close")
 
+    async def cancel_active_graph_tasks() -> None:
+        calls.append("cancel_tasks")
+
+    @asynccontextmanager
+    async def open_credit_ledger_client(_settings: object) -> AsyncIterator[object | None]:
+        yield None
+
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
+    monkeypatch.setattr(main, "cancel_active_graph_tasks", cancel_active_graph_tasks)
+    monkeypatch.setattr(main, "open_credit_ledger_client", open_credit_ledger_client)
     monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
     monkeypatch.setattr(main, "create_video_job_client", lambda _settings: object())
     monkeypatch.setattr(
@@ -68,7 +77,51 @@ def test_app_lifespan_initializes_and_closes_daytona(
     with TestClient(app):
         assert calls == ["init"]
 
-    assert calls == ["init", "close"]
+    assert calls == ["init", "cancel_tasks", "close"]
+
+
+def test_app_lifespan_opens_and_closes_credit_ledger_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """App lifespan keeps a pooled credit ledger client open for the app lifetime."""
+    calls: list[str] = []
+    credit_client = object()
+
+    async def init_daytona_client() -> None:
+        calls.append("init")
+
+    async def close_daytona_client() -> None:
+        calls.append("close")
+
+    async def cancel_active_graph_tasks() -> None:
+        calls.append("cancel_tasks")
+
+    @asynccontextmanager
+    async def open_credit_ledger_client(_settings: object) -> AsyncIterator[object]:
+        calls.append("credit_open")
+        try:
+            yield credit_client
+        finally:
+            calls.append("credit_close")
+
+    monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
+    monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
+    monkeypatch.setattr(main, "cancel_active_graph_tasks", cancel_active_graph_tasks)
+    monkeypatch.setattr(main, "open_credit_ledger_client", open_credit_ledger_client)
+    monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
+    monkeypatch.setattr(main, "create_video_job_client", lambda _settings: object())
+    monkeypatch.setattr(
+        main,
+        "create_video_artifact_url_resolver",
+        lambda _settings: object(),
+    )
+    app = main.create_app()
+
+    with TestClient(app):
+        assert app.state.credit_ledger_client is credit_client
+        assert calls == ["init", "credit_open"]
+
+    assert calls == ["init", "credit_open", "cancel_tasks", "credit_close", "close"]
 
 
 def test_app_lifespan_closes_daytona_when_later_startup_fails(
@@ -86,8 +139,13 @@ def test_app_lifespan_closes_daytona_when_later_startup_fails(
     def create_video_job_client(_settings: object) -> object:
         raise RuntimeError("video setup failed")
 
+    @asynccontextmanager
+    async def open_credit_ledger_client(_settings: object) -> AsyncIterator[object | None]:
+        yield None
+
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
+    monkeypatch.setattr(main, "open_credit_ledger_client", open_credit_ledger_client)
     monkeypatch.setattr(main, "create_video_job_client", create_video_job_client)
 
     with pytest.raises(RuntimeError, match="video setup failed"), TestClient(main.create_app()):

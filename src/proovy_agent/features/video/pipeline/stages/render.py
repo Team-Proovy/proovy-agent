@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING
 import unicodedata
 
 from proovy_agent.common.video.timeline import build_segment_timeline
+from proovy_agent.features.video.duration_adjuster import (
+    DisallowedNarrationCompressionError,
+    adapt_segment_timing,
+)
 from proovy_agent.features.video.exceptions import InvalidStageOutputError
 from proovy_agent.features.video.models import (
     RenderedSegment,
@@ -51,12 +55,24 @@ async def stage_render(
     rendered_segments: list[RenderedSegment] = []
     for segment in script.segments:
         tts_result = tts_by_segment_id[segment.segment_id]
+        try:
+            timing_adaptation = adapt_segment_timing(segment=segment, tts_result=tts_result)
+        except DisallowedNarrationCompressionError as exc:
+            raise InvalidStageOutputError(
+                "tts narration changed outside allowed compression policy",
+                stage=StageName.RENDER,
+                user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+                details={"segment_id": segment.segment_id},
+            ) from exc
+
         diagnostics: dict[str, object] = {
             "dry_run": True,
             "render_mode": "dry_run",
+            "tts_first_adaptation": timing_adaptation.to_diagnostics(),
             "timeline": _build_timeline_diagnostics(
                 segment_params=segment.params,
                 tts_result=tts_result,
+                total_duration=timing_adaptation.render_duration_seconds,
                 emphasis_targets=_emphasis_targets_from_params(
                     segment.params,
                     job_emphasis_targets=job_emphasis_targets,
@@ -73,7 +89,7 @@ async def stage_render(
                 segment_id=segment.segment_id,
                 visual_type=segment.visual_type,
                 video_path=None,
-                duration_seconds=tts_result.duration_seconds,
+                duration_seconds=timing_adaptation.render_duration_seconds,
                 diagnostics=diagnostics,
             )
         )
@@ -121,10 +137,11 @@ def _build_timeline_diagnostics(
     *,
     segment_params: Mapping[str, object],
     tts_result: SegmentTTSResult,
+    total_duration: float | None,
     emphasis_targets: list[str],
 ) -> dict[str, object]:
     timeline = build_segment_timeline(
-        total_duration=tts_result.duration_seconds,
+        total_duration=total_duration,
         word_timestamps=tts_result.word_timestamps,
         emphasis_targets=emphasis_targets,
         visual_targets=_visual_targets_from_params(segment_params, emphasis_targets),
