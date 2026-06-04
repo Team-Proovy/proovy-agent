@@ -1,7 +1,7 @@
 """SSE 이벤트 이미터."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import contextlib
 import logging
 
@@ -137,10 +137,20 @@ class SSEEmitter:
                 self._queue.get_nowait()
             self._queue.put_nowait(None)
 
-    async def stream(self) -> AsyncIterator[dict[str, str]]:
-        """sentinel(None)을 받을 때까지 sse-starlette 호환 dict를 yield한다."""
+    async def stream(
+        self,
+        serializer: Callable[[_EnvelopeBase], dict[str, str] | None] = to_sse,
+    ) -> AsyncIterator[dict[str, str]]:
+        """sentinel(None)을 받을 때까지 sse-starlette 호환 dict를 yield한다.
+
+        serializer는 envelope을 SSE 프레임 dict로 변환한다. 기본은 내부 envelope
+        포맷(`to_sse`). `/stream/v2`는 백엔드 vocab 변환기(`to_stream_v2`)를 넘기며,
+        None을 반환한 이벤트(백엔드가 소비 안 하는 내부 이벤트)는 skip한다.
+        """
         while True:
             item = await self._queue.get()
             if item is None:
                 break
-            yield to_sse(item)
+            frame = serializer(item)
+            if frame is not None:
+                yield frame

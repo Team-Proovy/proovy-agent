@@ -7,7 +7,8 @@ issue: "79"
 depends_on: ["1.06"]
 blocks: ["1.10", "2.04"]
 estimate: "M"
-status: "todo"
+status: "done"
+completed_at: "2026-06-01"
 owner: ""
 sprint: ""
 ---
@@ -24,21 +25,22 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] 설계 §2.2.2 DirectorBriefPolicy / PoC scriptify 보수적 기본값 확인
+- [x] 설계 §2.2.2 DirectorBriefPolicy / PoC scriptify 보수적 기본값 확인
 
 ## 구현 체크리스트
 
-- [ ] `stage_scriptify`: `SolutionPlan` + `VideoHints` → 세그먼트 스크립트(narration + visual_type + params)
-- [ ] `DirectorBriefPolicy`를 scriptify 프롬프트에 주입 (visual_description 품질 유도)
-- [ ] 보수적 기본값 유지(`disable_equation_chain` / `disable_prev_scene_state` / `scene_bridge_enabled=false` — PoC 결론, PR 없이 변경 금지)
-- [ ] 단위 테스트 (스크립트 구조 + visual_type 유효성)
+- [x] `stage_scriptify`: `SolutionPlan` + `VideoHints` → 세그먼트 스크립트(narration + visual_type + params)
+- [x] `DirectorBriefPolicy`를 scriptify 프롬프트에 주입 (visual_description 품질 유도)
+- [x] 보수적 기본값 유지(`disable_equation_chain` / `disable_prev_scene_state` / `scene_bridge_enabled=false` — PoC 결론, PR 없이 변경 금지)
+- [x] 단위 테스트 (스크립트 구조 + visual_type 유효성)
 
 ## Definition of Done
 
-- [ ] SolutionPlan fixture → 유효한 세그먼트 스크립트 생성
-- [ ] 자동화된 테스트 통과
+- [x] SolutionPlan fixture → 유효한 세그먼트 스크립트 생성
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 
 - deterministic enforcer / forbidden_requirements는 MVP 제외 — 위험 코드 차단은 AST(3.01)+sandbox가 hard gate
 - Phase A는 deterministic 템플릿만 선택 (visual_scene/graph_plot은 Phase C)
+- `SCRIPTIFY_CONSERVATIVE_DEFAULTS`는 1.07에서 prompt 가이드와 회귀 테스트로 고정한다. render stage가 소비할 명시 필드가 필요하면 후속 render/template task에서 계약을 확장한다.

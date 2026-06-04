@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from proovy_agent.app.api._runner import cancel_active_graph_tasks
+from proovy_agent.app.api.stream import router as stream_router
 from proovy_agent.app.api.v1.router import router as v1_router
-from proovy_agent.app.api.v1.solve import cancel_active_solve_tasks
 from proovy_agent.common.checkpoint.saver import open_checkpointer
 from proovy_agent.common.config import settings
 from proovy_agent.common.sandbox.client import close_daytona_client, init_daytona_client
@@ -36,7 +37,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 try:
                     yield
                 finally:
-                    await cancel_active_solve_tasks()
+                    await cancel_active_graph_tasks()
     finally:
         await close_daytona_client()
 
@@ -58,6 +59,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(v1_router, prefix="/api/v1")
+    # 백엔드(Proovy-server) 연동 계약 — prefix 없이 root에 /stream/v2, /health 노출.
+    # 배포 ingress가 https://.../ai/* → 앱 /* 매핑한다고 가정.
+    app.include_router(stream_router)
 
     return app
 

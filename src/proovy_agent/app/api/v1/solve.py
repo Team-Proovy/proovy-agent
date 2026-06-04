@@ -1,32 +1,21 @@
 """문제 풀이 API 엔드포인트."""
 
-import asyncio
-from collections.abc import AsyncGenerator
-import logging
 import uuid
 
 from fastapi import APIRouter, Request
 from langchain_core.messages import HumanMessage
 from sse_starlette.sse import EventSourceResponse
 
+from proovy_agent.app.api._runner import SSE_PING_INTERVAL, start_graph_task
 from proovy_agent.app.schemas.solve import SolveRequest
-from proovy_agent.common.sse.context import current_emitter
-from proovy_agent.common.sse.emitter import SSEEmitter
-from proovy_agent.common.sse.events import DonePayload, ErrorPayload
 from proovy_agent.graph.builder import get_graph
-from proovy_agent.graph.runtime import (
-    ActiveHoldTrackingCreditLedgerClient,
-    current_credit_ledger_client,
-    current_video_job_client,
-    track_active_credit_hold,
-)
 from proovy_agent.graph.state import ProovyState
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
-# fire-and-forget 태스크 참조 유지 (GC 방지)
-_active_tasks: set[asyncio.Task[None]] = set()
+# 모듈 로컬 별칭 — 엔드포인트 가독성 + ping 계약 테스트 호환.
+# 실제 값/근거는 _runner.SSE_PING_INTERVAL 참고.
+_SSE_PING_INTERVAL = SSE_PING_INTERVAL
 
 
 def _build_initial_state(request: SolveRequest) -> ProovyState:
@@ -39,78 +28,20 @@ def _build_initial_state(request: SolveRequest) -> ProovyState:
     )
 
 
-async def _release_active_credit_hold(
-    ledger: ActiveHoldTrackingCreditLedgerClient | None,
-    user_id: str,
-) -> None:
-    if ledger is None or ledger.active_hold_id is None:
-        return
-
-    hold_id = ledger.active_hold_id
-    try:
-        await ledger.release_active_hold(user_id)
-    except Exception:
-        logger.exception("그래프 실패 후 pending credit hold release 실패: hold_id=%s", hold_id)
-
-
-async def cancel_active_solve_tasks() -> None:
-    """Cancel and await in-flight solve tasks before shared clients close."""
-    current_task = asyncio.current_task()
-    tasks = [task for task in _active_tasks if task is not current_task and not task.done()]
-    if not tasks:
-        return
-
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-
 @router.post("/solve", response_class=EventSourceResponse)
 async def solve_endpoint(request: SolveRequest, http_request: Request) -> EventSourceResponse:
-    """수학 문제를 SSE로 스트리밍하며 풀이합니다."""
+    """수학 문제를 SSE로 스트리밍하며 풀이합니다.
+
+    그래프 실행은 _runner.start_graph_task가 담당하며(SSE 연결과 독립된 fire-and-forget
+    태스크), 본 엔드포인트는 내부 envelope 포맷(to_sse)으로 스트리밍한다. 백엔드 연동용
+    포맷은 /stream/v2 참고.
+    """
     state = _build_initial_state(request)
-    emitter = SSEEmitter(thread_id=state.thread_id)
-    credit_ledger_client = track_active_credit_hold(
-        getattr(http_request.app.state, "credit_ledger_client", None)
+    emitter = start_graph_task(
+        state,
+        get_graph(),
+        credit_ledger_client=getattr(http_request.app.state, "credit_ledger_client", None),
+        video_job_client=getattr(http_request.app.state, "video_job_client", None),
     )
-    video_job_client = getattr(http_request.app.state, "video_job_client", None)
-
-    async def _run() -> None:
-        emitter_token = current_emitter.set(emitter)
-        credit_token = current_credit_ledger_client.set(credit_ledger_client)
-        video_token = current_video_job_client.set(video_job_client)
-        try:
-            # 체크포인트 키를 user_id로 네임스페이스해 타 사용자 thread_id 접근을 차단.
-            # user_id 인증 자체는 상위 게이트웨이/BFF 책임 (여기선 신뢰 가정).
-            checkpoint_thread_id = f"{state.user_id}:{state.thread_id}"
-            await get_graph().ainvoke(
-                state,
-                config={"configurable": {"thread_id": checkpoint_thread_id}},
-            )
-            # 정상 완료 신호 — 클라이언트가 EventSource onerror에 의존하지 않게 한다
-            await emitter.emit(DonePayload())
-        except asyncio.CancelledError:
-            # 클라이언트 연결 종료 — done/error 둘 다 보내지 않는다
-            await _release_active_credit_hold(credit_ledger_client, state.user_id)
-            logger.info("클라이언트 연결 종료로 solve 태스크가 취소되었습니다.")
-        except Exception as exc:
-            logger.exception("solve 실행 중 오류 발생")
-            await _release_active_credit_hold(credit_ledger_client, state.user_id)
-            if not getattr(exc, "sse_emitted", False):
-                await emitter.emit(ErrorPayload(message="풀이 중 오류가 발생했습니다."))
-        finally:
-            await emitter.close()
-            current_video_job_client.reset(video_token)
-            current_credit_ledger_client.reset(credit_token)
-            current_emitter.reset(emitter_token)
-
-    # 그래프 태스크는 SSE 연결과 독립적으로 실행 — disconnect 시에도 풀이가 완료됨
-    task: asyncio.Task[None] = asyncio.create_task(_run())
-    _active_tasks.add(task)
-    task.add_done_callback(_active_tasks.discard)
-
-    async def _stream() -> AsyncGenerator:
-        async for event in emitter.stream():
-            yield event
-
-    return EventSourceResponse(_stream())
+    # 유휴 구간 프록시 idle 타임아웃 방지 + SSE 연결 끊김 시 스트림 종료.
+    return EventSourceResponse(emitter.stream(), ping=_SSE_PING_INTERVAL)

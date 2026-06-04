@@ -54,7 +54,7 @@ def test_app_lifespan_initializes_and_closes_daytona(
         """Record shutdown cleanup."""
         calls.append("close")
 
-    async def cancel_active_solve_tasks() -> None:
+    async def cancel_active_graph_tasks() -> None:
         calls.append("cancel_tasks")
 
     @asynccontextmanager
@@ -63,7 +63,7 @@ def test_app_lifespan_initializes_and_closes_daytona(
 
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
-    monkeypatch.setattr(main, "cancel_active_solve_tasks", cancel_active_solve_tasks)
+    monkeypatch.setattr(main, "cancel_active_graph_tasks", cancel_active_graph_tasks)
     monkeypatch.setattr(main, "open_credit_ledger_client", open_credit_ledger_client)
     monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
     monkeypatch.setattr(main, "create_video_job_client", lambda _settings: object())
@@ -93,7 +93,7 @@ def test_app_lifespan_opens_and_closes_credit_ledger_client(
     async def close_daytona_client() -> None:
         calls.append("close")
 
-    async def cancel_active_solve_tasks() -> None:
+    async def cancel_active_graph_tasks() -> None:
         calls.append("cancel_tasks")
 
     @asynccontextmanager
@@ -106,7 +106,7 @@ def test_app_lifespan_opens_and_closes_credit_ledger_client(
 
     monkeypatch.setattr(main, "init_daytona_client", init_daytona_client)
     monkeypatch.setattr(main, "close_daytona_client", close_daytona_client)
-    monkeypatch.setattr(main, "cancel_active_solve_tasks", cancel_active_solve_tasks)
+    monkeypatch.setattr(main, "cancel_active_graph_tasks", cancel_active_graph_tasks)
     monkeypatch.setattr(main, "open_credit_ledger_client", open_credit_ledger_client)
     monkeypatch.setattr(main, "open_checkpointer", _fake_checkpointer)
     monkeypatch.setattr(main, "create_video_job_client", lambda _settings: object())

@@ -15,6 +15,7 @@ from pydantic import BaseModel, TypeAdapter
 import pytest
 
 from proovy_agent.app import main
+from proovy_agent.app.api import _runner as runner_module
 from proovy_agent.app.api.v1 import solve as solve_module
 from proovy_agent.common.sse.context import current_emitter
 from proovy_agent.common.sse.events import (
@@ -317,7 +318,7 @@ def test_solve_releases_active_hold_on_graph_exception() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_active_solve_tasks_cancels_and_awaits_registered_tasks() -> None:
+async def test_cancel_active_graph_tasks_cancels_and_awaits_registered_tasks() -> None:
     cleanup: list[str] = []
     ready = asyncio.Event()
 
@@ -329,18 +330,49 @@ async def test_cancel_active_solve_tasks_cancels_and_awaits_registered_tasks() -
             cleanup.append("done")
 
     task = asyncio.create_task(_sleeping_task())
-    solve_module._active_tasks.add(task)
-    task.add_done_callback(solve_module._active_tasks.discard)
+    runner_module._active_tasks.add(task)
+    task.add_done_callback(runner_module._active_tasks.discard)
     try:
         await ready.wait()
 
-        await solve_module.cancel_active_solve_tasks()
+        await runner_module.cancel_active_graph_tasks()
 
         assert task.done()
         assert cleanup == ["done"]
-        assert task not in solve_module._active_tasks
+        assert task not in runner_module._active_tasks
     finally:
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        solve_module._active_tasks.discard(task)
+        runner_module._active_tasks.discard(task)
+
+
+def test_solve_configures_ping_heartbeat(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """EventSourceResponse에 ping 간격이 설정되는지 검증 — 설정 계약 테스트 (§6.1).
+
+    실제 ': ping' 코멘트 라인이 유휴 구간에 나가는지는 검증하지 않는다(sse-starlette
+    내부 동작). 엔드포인트가 ping 간격을 올바른 값으로 구성하는지만 확인한다.
+    """
+    captured: dict = {}
+
+    real_ese = solve_module.EventSourceResponse
+
+    def _capture_ese(*args: object, **kwargs: object) -> object:
+        captured["ping"] = kwargs.get("ping")
+        return real_ese(*args, **kwargs)
+
+    monkeypatch.setattr(solve_module, "EventSourceResponse", _capture_ese)
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with patch("proovy_agent.app.api.v1.solve.get_graph", return_value=mock_graph):
+        response = client.post(
+            "/api/v1/solve",
+            json={"problem": "1+1은?", "user_id": "u"},
+        )
+
+    assert response.status_code == 200
+    assert captured.get("ping") == solve_module._SSE_PING_INTERVAL

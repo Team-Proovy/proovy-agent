@@ -8,6 +8,15 @@ from proovy_agent.features.video.exceptions import (
     TransientFailure,
     classify_failure,
 )
+from proovy_agent.features.video.hint_extractor import (
+    HintExtractionResult,
+    build_target_slice,
+    extract_solution_plan,
+    extract_video_hints,
+    extract_video_inputs,
+    select_target_turn,
+    trim_tool_messages_strict,
+)
 from proovy_agent.features.video.models import (
     DirectorBriefPolicy,
     FailureKind,
@@ -36,6 +45,7 @@ __all__ = [
     "DirectorBriefPolicy",
     "FailureKind",
     "FinalVideoArtifact",
+    "HintExtractionResult",
     "InvalidSolutionPlanError",
     "InvalidStageOutputError",
     "PermanentFailure",
@@ -58,6 +68,12 @@ __all__ = [
     "VideoPipelineJob",
     "VideoPipelineResult",
     "VideoScript",
+    "build_target_slice",
     "classify_failure",
+    "extract_solution_plan",
+    "extract_video_hints",
+    "extract_video_inputs",
+    "select_target_turn",
+    "trim_tool_messages_strict",
     "user_error_message",
 ]

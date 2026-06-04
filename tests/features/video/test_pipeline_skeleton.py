@@ -11,6 +11,7 @@ from proovy_agent.features.video.exceptions import (
     classify_failure,
 )
 from proovy_agent.features.video.models import (
+    DirectorBriefPolicy,
     FinalVideoArtifact,
     RenderedSegment,
     ScriptSegment,
@@ -19,6 +20,7 @@ from proovy_agent.features.video.models import (
     SolutionStep,
     StageName,
     UserErrorCode,
+    VideoHints,
     VideoJobInput,
     VideoPipelineJob,
     VideoPipelineResult,
@@ -226,10 +228,17 @@ async def test_stage_scriptify_uses_sequential_order_independent_of_source_step_
     script = await stage_scriptify(raw_plan, job=_raw_job(raw_plan), ctx=StageContext())
 
     assert [(segment.segment_id, segment.order) for segment in script.segments] == [
-        ("step-1", 1),
-        ("step-3", 2),
+        ("intro", 1),
+        ("step-1", 2),
+        ("step-3", 3),
+        ("final-answer", 4),
+        ("outro", 5),
     ]
-    assert [segment.source_step_number for segment in script.segments] == [1, 3]
+    assert [
+        segment.source_step_number
+        for segment in script.segments
+        if segment.source_step_number is not None
+    ] == [1, 3]
 
 
 async def test_stage_render_rejects_missing_or_duplicate_tts_segments() -> None:
@@ -254,6 +263,221 @@ async def test_stage_render_rejects_missing_or_duplicate_tts_segments() -> None:
             job=_job(_sample_plan()),
             ctx=ctx,
         )
+
+
+async def test_stage_render_syncs_emphasis_and_subtitles_from_tts_word_timestamps() -> None:
+    script = VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="dry_run",
+                narration="정답은 x=3입니다.",
+                params={"visual_targets": {"x=3": "answer-mobject"}},
+            )
+        ],
+        final_answer="x = 3",
+    )
+    job = VideoPipelineJob(
+        job_id="job-1",
+        input_snapshot=VideoJobInput(
+            problem_text="x - 3 = 0을 풀어라.",
+            solution_plan=_sample_plan(),
+            video_hints=VideoHints(
+                visualization_hints=["최종 답 x=3 강조"],
+                emphasis_targets=["x=3"],
+                director_policy=DirectorBriefPolicy(
+                    brief_template="objects / layout / animation order"
+                ),
+            ),
+        ),
+    )
+
+    rendered_segments = await stage_render(
+        script,
+        [
+            SegmentTTSResult(
+                segment_id="step-1",
+                narration="정답은 x=3입니다.",
+                duration_seconds=2.0,
+                word_timestamps=[
+                    {"word": "정답은", "start": 0.0, "end": 0.45},
+                    {"word": "x=3입니다.", "start": 0.8, "end": 1.25},
+                ],
+            )
+        ],
+        job=job,
+        ctx=StageContext(),
+    )
+
+    timeline = rendered_segments[0].diagnostics["timeline"]
+    assert timeline["source"] == "emphasis_synced"
+    assert timeline["used_fallback"] is False
+    assert len(timeline["events"]) == 1
+    event = timeline["events"][0]
+    assert event["at_seconds"] == 0.8
+    assert event["op"] == "indicate"
+    assert event["target_id"] == "answer-mobject"
+    assert event["duration"] == pytest.approx(0.45)
+    assert event["source_text"] == "x=3입니다."
+    assert timeline["subtitle_cues"] == [
+        {
+            "start_seconds": 0.0,
+            "end_seconds": 0.45,
+            "text": "정답은",
+            "active_word": "정답은",
+        },
+        {
+            "start_seconds": 0.8,
+            "end_seconds": 1.25,
+            "text": "x=3입니다.",
+            "active_word": "x=3입니다.",
+        },
+    ]
+
+
+async def test_stage_render_uses_segment_scoped_emphasis_targets_for_multi_segment_video() -> None:
+    script = VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="dry_run",
+                narration="정답은 x=3입니다.",
+                params={"visual_targets": {"x=3": "first-answer"}},
+            ),
+            ScriptSegment(
+                segment_id="step-2",
+                order=2,
+                visual_type="dry_run",
+                narration="정답은 x=3입니다.",
+                params={
+                    "emphasis_targets": ["x=3"],
+                    "visual_targets": {"x=3": "second-answer"},
+                },
+            ),
+        ],
+        final_answer="x = 3",
+    )
+    job = VideoPipelineJob(
+        job_id="job-1",
+        input_snapshot=VideoJobInput(
+            problem_text="x - 3 = 0을 풀어라.",
+            solution_plan=_sample_plan(),
+            video_hints=VideoHints(
+                visualization_hints=["최종 답 x=3 강조"],
+                emphasis_targets=["x=3"],
+                director_policy=DirectorBriefPolicy(
+                    brief_template="objects / layout / animation order"
+                ),
+            ),
+        ),
+    )
+
+    rendered_segments = await stage_render(
+        script,
+        [
+            SegmentTTSResult(
+                segment_id="step-1",
+                narration="정답은 x=3입니다.",
+                duration_seconds=1.5,
+                word_timestamps=[{"word": "x=3입니다.", "start": 0.4, "end": 0.9}],
+            ),
+            SegmentTTSResult(
+                segment_id="step-2",
+                narration="정답은 x=3입니다.",
+                duration_seconds=1.5,
+                word_timestamps=[{"word": "x=3입니다.", "start": 0.5, "end": 1.0}],
+            ),
+        ],
+        job=job,
+        ctx=StageContext(),
+    )
+
+    first_timeline = rendered_segments[0].diagnostics["timeline"]
+    second_timeline = rendered_segments[1].diagnostics["timeline"]
+    assert first_timeline["source"] == "word_timestamps"
+    assert first_timeline["events"] == []
+    assert first_timeline["unmatched_emphasis_targets"] == []
+    assert second_timeline["source"] == "emphasis_synced"
+    assert second_timeline["events"][0]["target_id"] == "second-answer"
+
+
+async def test_stage_render_merges_visual_targets_with_identity_fallback() -> None:
+    script = VideoScript(
+        title="그래프",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="dry_run",
+                narration="교점을 강조합니다.",
+                params={
+                    "emphasis_targets": ["교점"],
+                    "visual_targets": {"x=3": "answer-mobject"},
+                },
+            )
+        ],
+    )
+
+    rendered_segments = await stage_render(
+        script,
+        [
+            SegmentTTSResult(
+                segment_id="step-1",
+                narration="교점을 강조합니다.",
+                duration_seconds=1.5,
+                word_timestamps=[{"word": "교점을", "start": 0.3, "end": 0.8}],
+            )
+        ],
+        job=_job(_sample_plan()),
+        ctx=StageContext(),
+    )
+
+    timeline = rendered_segments[0].diagnostics["timeline"]
+    assert timeline["source"] == "emphasis_synced"
+    assert timeline["events"][0]["target_id"] == "교점"
+    assert timeline["unmatched_emphasis_targets"] == []
+
+
+async def test_stage_render_marks_source_fallback_when_emphasis_sync_fails() -> None:
+    script = VideoScript(
+        title="일차방정식",
+        segments=[
+            ScriptSegment(
+                segment_id="step-1",
+                order=1,
+                visual_type="dry_run",
+                narration="다른 단어만 말합니다.",
+                params={
+                    "emphasis_targets": ["x=3"],
+                    "visual_targets": {"x=3": "answer-mobject"},
+                },
+            )
+        ],
+    )
+
+    rendered_segments = await stage_render(
+        script,
+        [
+            SegmentTTSResult(
+                segment_id="step-1",
+                narration="다른 단어만 말합니다.",
+                duration_seconds=1.5,
+                word_timestamps=[{"word": "다른", "start": 0.2, "end": 0.5}],
+            )
+        ],
+        job=_job(_sample_plan()),
+        ctx=StageContext(),
+    )
+
+    timeline = rendered_segments[0].diagnostics["timeline"]
+    assert timeline["source"] == "fallback"
+    assert timeline["used_fallback"] is True
+    assert timeline["fallback_reasons"] == ["unmatched_emphasis_targets"]
+    assert timeline["unmatched_emphasis_targets"] == ["x=3"]
 
 
 def test_video_pipeline_result_validates_stage_segment_alignment() -> None:

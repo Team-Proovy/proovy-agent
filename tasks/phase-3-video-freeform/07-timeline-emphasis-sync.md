@@ -7,7 +7,8 @@ issue: "97"
 depends_on: ["1.09", "1.06"]
 blocks: []
 estimate: "M"
-status: "todo"
+status: "done"
+completed_at: 2026-06-01
 owner: ""
 sprint: ""
 ---
@@ -25,18 +26,18 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] 설계 §4.2.2 시각 강조와 단어 동기 재확인
+- [x] 설계 §4.2.2 시각 강조와 단어 동기 재확인
 
 ## 구현 체크리스트
 
-- [ ] `common/video/timeline.py`: word-timestamp 기반 `Indicate(t)` 시각 강조 동기
-- [ ] `emphasis_targets`(VideoHints) → 발화 시점 정렬
-- [ ] 자막 정밀 동기 (낮은 위험)
+- [x] `common/video/timeline.py`: word-timestamp 기반 `Indicate(t)` 시각 강조 동기
+- [x] `emphasis_targets`(VideoHints) → 발화 시점 정렬
+- [x] 자막 정밀 동기 (낮은 위험)
 
 ## Definition of Done
 
-- [ ] 시각 강조가 해당 단어 발화 시점에 정렬 (프레임 타이밍 검증)
-- [ ] 자동화된 테스트 통과
+- [x] 시각 강조가 해당 단어 발화 시점에 정렬 (프레임 타이밍 검증)
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 
