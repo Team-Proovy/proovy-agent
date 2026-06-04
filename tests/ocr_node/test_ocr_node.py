@@ -363,7 +363,7 @@ class TestPerformanceAndEdgeCases:
         assert "ocr_text" in result
         assert any("@용어" in tag for tag in result["tags"])
         # 유니코드 문자가 손실되지 않아야 함
-        assert "α" in result["ocr_text"] or "α" in unicode_text  # noqa: RUF001
+        assert "α" in result["ocr_text"]  # noqa: RUF001
 
 
 if __name__ == "__main__":

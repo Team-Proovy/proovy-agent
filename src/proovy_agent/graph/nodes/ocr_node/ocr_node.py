@@ -7,7 +7,6 @@ LangGraph Preprocessor로 동작하는 메인 OCR 노드입니다.
 import asyncio
 import base64
 import io
-import re
 import time
 from typing import Any
 
@@ -47,6 +46,8 @@ class OCRNode:
         Returns:
             업데이트할 상태 딕셔너리 (ocr_text, ocr_confidence, tags)
         """
+        start_time = time.time()  # 처리 시작 시간 기록
+
         try:
             # 1. raw_input에서 이미지 데이터 추출
             image_data = self._extract_image_data(state.raw_input)
@@ -71,7 +72,6 @@ class OCRNode:
 
         except Exception as e:
             # 오류 발생 시 기본값으로 폴백
-            start_time = time.time()  # 오류 처리에서만 필요
             return await self._handle_processing_error(e, state, start_time)
 
     def _extract_image_data(self, raw_input: dict[str, Any]) -> bytes | None:
@@ -124,16 +124,15 @@ class OCRNode:
         # @커맨드 파싱 (CommandParser 사용)
         parsing_result = self.command_parser.parse(problem)
 
-        # @커맨드 제거한 순수 텍스트 (CommandParser와 동일한 패턴)
-        clean_text = re.sub(r"@\S+", "", problem).strip()
-
-        # 기존 preprocessor와 동일한 태그 형식 유지 (@원문 형태)
         # CommandParser detected_patterns에서 원문 커맨드 추출
         original_tags = []
+        clean_text = problem
         for pattern in parsing_result.detected_patterns:
             if pattern.startswith("@command: "):
                 original_command = pattern.replace("@command: ", "").strip()
                 original_tags.append(original_command)
+                # 실제 원문 커맨드를 텍스트에서 제거 (멀티워드 커맨드 지원)
+                clean_text = clean_text.replace(original_command, "").strip()
 
         # CommandParser가 패턴을 찾지 못한 경우에는 빈 태그 반환
         # regex fallback 제거 - CommandParser 결과만 신뢰
@@ -203,23 +202,33 @@ class OCRNode:
                     original_command = pattern.replace("@command: ", "").strip()
                     original_commands.append(original_command)
 
-            # CommandTag 생성 - detected_patterns 기반으로 안전하게 매핑
+            # CommandTag 생성 - 안전한 매핑 방식 사용
             command_tags = []
-            # command_result.tags와 original_commands 개수가 다를 수 있으므로
-            # 안전하게 처리: detected_patterns에서 직접 CommandTag 생성
+            # original_commands를 기준으로 CommandTag 생성
+            # tags 매핑은 단순화하여 안전성 확보
             for idx, original_command in enumerate(original_commands):
-                # tags에서 해당하는 태그 찾기 (순서 기반)
-                tag = command_result.tags[idx] if idx < len(command_result.tags) else "unknown"
+                # 태그 매핑을 단순화 - 인덱스 충돌 방지
+                if idx < len(command_result.tags):
+                    tag = command_result.tags[idx]
+                else:
+                    # 매핑 실패시 원문에서 추정
+                    if original_command.startswith("@"):
+                        tag = original_command[1:].split()[0] if " " in original_command else original_command[1:]
+                    else:
+                        tag = "unknown"
 
                 command_tags.append(CommandTag(
                     command=tag,
                     original_text=original_command,
                     confidence=command_result.confidence,
-                    position=idx * 10,  # 위치 정보 추정
+                    position=0,  # 위치 정보는 단순화
                 ))
 
             # @커맨드 제거된 텍스트로 통일성 유지
-            clean_text = re.sub(r"@\S+", "", vlm_result.raw_text).strip()
+            # detected_patterns에서 실제 원문 커맨드 제거 (멀티워드 커맨드 지원)
+            clean_text = vlm_result.raw_text
+            for original_command in original_commands:
+                clean_text = clean_text.replace(original_command, "").strip()
             final_text = clean_text or vlm_result.raw_text
 
             return OCRResult(
