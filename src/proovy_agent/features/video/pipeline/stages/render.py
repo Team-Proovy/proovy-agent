@@ -21,7 +21,7 @@ from proovy_agent.features.video.models import (
 )
 
 if TYPE_CHECKING:
-    from proovy_agent.features.video.models import VideoPipelineJob, VideoScript
+    from proovy_agent.features.video.models import ScriptSegment, VideoPipelineJob, VideoScript
     from proovy_agent.features.video.pipeline.stage_context import StageContext
 
 
@@ -33,7 +33,6 @@ async def stage_render(
     ctx: StageContext,
 ) -> list[RenderedSegment]:
     """Return render placeholders and keep unknown duration explicit."""
-    _ = ctx
     expected_segment_ids = [segment.segment_id for segment in script.segments]
     tts_segment_ids = [result.segment_id for result in tts_results]
     if tts_segment_ids != expected_segment_ids:
@@ -66,29 +65,72 @@ async def stage_render(
                 details={"segment_id": segment.segment_id},
             ) from exc
 
+        diagnostics: dict[str, object] = {
+            "dry_run": True,
+            "render_mode": "dry_run",
+            "tts_first_adaptation": timing_adaptation.to_diagnostics(),
+            "timeline": _build_timeline_diagnostics(
+                segment_params=segment.params,
+                tts_result=tts_result,
+                total_duration=timing_adaptation.render_duration_seconds,
+                emphasis_targets=_emphasis_targets_from_params(
+                    segment.params,
+                    job_emphasis_targets=job_emphasis_targets,
+                    allow_job_fallback=allow_job_emphasis_fallback,
+                ),
+            ),
+        }
+        template_diagnostics = _render_template_diagnostics(segment, ctx=ctx)
+        if template_diagnostics is not None:
+            diagnostics["render_mode"] = "template_source"
+            diagnostics["template"] = template_diagnostics
         rendered_segments.append(
             RenderedSegment(
                 segment_id=segment.segment_id,
                 visual_type=segment.visual_type,
                 video_path=None,
                 duration_seconds=timing_adaptation.render_duration_seconds,
-                diagnostics={
-                    "dry_run": True,
-                    "tts_first_adaptation": timing_adaptation.to_diagnostics(),
-                    "timeline": _build_timeline_diagnostics(
-                        segment_params=segment.params,
-                        tts_result=tts_result,
-                        total_duration=timing_adaptation.render_duration_seconds,
-                        emphasis_targets=_emphasis_targets_from_params(
-                            segment.params,
-                            job_emphasis_targets=job_emphasis_targets,
-                            allow_job_fallback=allow_job_emphasis_fallback,
-                        ),
-                    ),
-                },
+                diagnostics=diagnostics,
             )
         )
     return rendered_segments
+
+
+def _render_template_diagnostics(
+    segment: ScriptSegment,
+    *,
+    ctx: StageContext,
+) -> dict[str, object] | None:
+    definition = ctx.registry.get(segment.visual_type)
+    if definition is None:
+        return None
+    try:
+        ctx.registry.validate_params(segment.visual_type, segment.params)
+        output = definition.render_fn(**segment.params)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidStageOutputError(
+            "visual_type template render failed",
+            stage=StageName.RENDER,
+            user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+            details={
+                "segment_id": segment.segment_id,
+                "visual_type": segment.visual_type,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        ) from exc
+    return _template_output_to_diagnostics(output)
+
+
+def _template_output_to_diagnostics(output: object) -> dict[str, object]:
+    as_diagnostics = getattr(output, "as_diagnostics", None)
+    if callable(as_diagnostics):
+        diagnostics = as_diagnostics()
+        if isinstance(diagnostics, Mapping):
+            return dict(diagnostics)
+    if isinstance(output, Mapping):
+        return dict(output)
+    return {"kind": type(output).__name__, "repr": repr(output)}
 
 
 def _build_timeline_diagnostics(

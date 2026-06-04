@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from proovy_agent.features.video.visual_types.registry import VisualTypeRegistry
+from proovy_agent.features.video.visual_types.templates import (
+    render_equation_derivation,
+    render_equation_write,
+    render_highlight_result,
+    render_intro_problem,
+    render_outro_summary,
+)
 
 PHASE_A_DETERMINISTIC_VISUAL_TYPES: tuple[str, ...] = (
     "intro_problem",
@@ -14,15 +19,21 @@ PHASE_A_DETERMINISTIC_VISUAL_TYPES: tuple[str, ...] = (
     "outro_summary",
 )
 
-_STRING_ARRAY_SCHEMA: dict[str, Any] = {
-    "type": "array",
-    "items": {"type": "string"},
-}
 
-
-def _placeholder_render_fn(**kwargs: Any) -> dict[str, Any]:
-    """Keep registry render_fn callable until deterministic templates land."""
-    return dict(kwargs)
+def _string_array_schema(
+    *,
+    min_items: int | None = None,
+    max_items: int | None = None,
+) -> dict[str, object]:
+    schema: dict[str, object] = {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    if min_items is not None:
+        schema["minItems"] = min_items
+    if max_items is not None:
+        schema["maxItems"] = max_items
+    return schema
 
 
 def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
@@ -36,8 +47,8 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
                 "title": {"type": "string"},
                 "problem_text": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "hints": _STRING_ARRAY_SCHEMA,
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "hints": _string_array_schema(max_items=3),
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -45,7 +56,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "Introduce the original problem text and its key givens. "
             "Use only static text layout and deterministic emphasis."
         ),
-        render_fn=_placeholder_render_fn,
+        render_fn=render_intro_problem,
         fallback_candidates=["equation_write"],
         narration_alignment_rule=(
             "Narration must state what problem is being solved before any transformation."
@@ -59,7 +70,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "properties": {
                 "latex_expression": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -67,7 +78,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "Display one LaTeX equation clearly. Use this for a single equation or "
             "a step that should not depend on previous scene state."
         ),
-        render_fn=_placeholder_render_fn,
+        render_fn=render_equation_write,
         fallback_candidates=["highlight_result"],
         narration_alignment_rule="Narration must mention the equation being written.",
     )
@@ -84,7 +95,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
                     "maxItems": 5,
                 },
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -92,7 +103,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "Show a deterministic 2-5 line derivation. Do not rely on previous scene "
             "objects; each line must be self-contained."
         ),
-        render_fn=_placeholder_render_fn,
+        render_fn=render_equation_derivation,
         fallback_candidates=["equation_write"],
         narration_alignment_rule="Narration must describe the transformation between lines.",
     )
@@ -104,7 +115,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "properties": {
                 "result_latex": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -112,7 +123,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "Highlight the final answer or the current result. Use deterministic text "
             "and box emphasis only."
         ),
-        render_fn=_placeholder_render_fn,
+        render_fn=render_highlight_result,
         fallback_candidates=["equation_write"],
         narration_alignment_rule="Narration must match the highlighted result.",
     )
@@ -122,10 +133,10 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "type": "object",
             "required": ["summary", "visual_description"],
             "properties": {
-                "summary": _STRING_ARRAY_SCHEMA,
+                "summary": _string_array_schema(min_items=1, max_items=4),
                 "final_answer": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -133,7 +144,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "Summarize the completed solution in short deterministic text lines. "
             "Do not introduce new mathematical claims."
         ),
-        render_fn=_placeholder_render_fn,
+        render_fn=render_outro_summary,
         fallback_candidates=["highlight_result"],
         narration_alignment_rule="Narration must summarize only steps present in the plan.",
     )

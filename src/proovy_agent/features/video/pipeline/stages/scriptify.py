@@ -200,7 +200,7 @@ def _intro_segment(
             video_hints,
         ),
     }
-    _with_optional_list(params, key="hints", values=_video_hints_list(video_hints))
+    _with_optional_list(params, key="hints", values=_video_hints_list(video_hints)[:3])
     _with_optional_list(
         params,
         key="emphasis_targets",
