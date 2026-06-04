@@ -28,7 +28,6 @@ from proovy_agent.features.video.visual_types import (
     DeterministicTemplateRender,
     create_phase_a_visual_type_registry,
 )
-from proovy_agent.features.video.visual_types.templates import render_equation_write
 
 
 def _sample_params(visual_type: str) -> dict[str, object]:
@@ -188,6 +187,15 @@ async def test_stage_render_attaches_phase_a_template_diagnostics() -> None:
     for rendered_segment in rendered_segments:
         assert rendered_segment.diagnostics["dry_run"] is True
         assert rendered_segment.diagnostics["render_mode"] == "template_source"
+        assert rendered_segment.diagnostics["tts_first_adaptation"]["status"] in {
+            "converged",
+            "out_of_band",
+        }
+        assert rendered_segment.diagnostics["timeline"]["source"] in {
+            "fallback",
+            "word_timestamps",
+            "emphasis_synced",
+        }
         template = rendered_segment.diagnostics["template"]
         assert isinstance(template, Mapping)
         assert template["kind"] == "manim_source"
@@ -249,22 +257,25 @@ def test_phase_a_cjk_mathtex_smoke_render_when_manim_stack_available(
     if xe_cjk.returncode != 0:
         pytest.skip("xeCJK.sty is not installed")
 
-    output = render_equation_write(
-        latex_expression=r"\text{정답은 } x = 3",
-        visual_description="한국어 MathTex smoke 렌더입니다.",
-        emphasis_targets=["x = 3"],
-    )
-    scene_path = tmp_path / "phase_a_cjk_smoke.py"
-    scene_path.write_text(output.manim_source, encoding="utf-8")
+    registry = create_phase_a_visual_type_registry()
+    outputs = [
+        registry.require(visual_type).render_fn(**_sample_params(visual_type))
+        for visual_type in PHASE_A_DETERMINISTIC_VISUAL_TYPES
+    ]
 
-    completed = subprocess.run(
-        [manim, "-ql", "-s", str(scene_path), output.scene_class_name],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    for output in outputs:
+        scene_path = tmp_path / f"{output.visual_type}_cjk_smoke.py"
+        scene_path.write_text(output.manim_source, encoding="utf-8")
 
-    assert completed.returncode == 0, completed.stderr[-2000:]
-    assert list(tmp_path.rglob("*.png"))
+        completed = subprocess.run(
+            [manim, "-ql", "-s", str(scene_path), output.scene_class_name],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr[-2000:]
+
+    assert len(list(tmp_path.rglob("*.png"))) >= len(outputs)

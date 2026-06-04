@@ -140,6 +140,27 @@ async def test_stage_scriptify_builds_registry_valid_deterministic_script() -> N
     ]
 
 
+async def test_stage_scriptify_truncates_intro_hints_to_registry_schema_limit() -> None:
+    video_hints = VideoHints(
+        visualization_hints=["힌트 1", "힌트 2", "힌트 3", "힌트 4"],
+        suggested_segments=5,
+        emphasis_targets=["x = 3"],
+        director_policy=DirectorBriefPolicy(
+            brief_template="objects / layout / animation order",
+            examples=[],
+        ),
+    )
+    registry = create_phase_a_visual_type_registry()
+    ctx = StageContext(registry=registry)
+
+    script = await stage_scriptify(_sample_plan(), job=_job(video_hints), ctx=ctx)
+
+    intro = script.segments[0]
+    assert intro.visual_type == "intro_problem"
+    assert intro.params["hints"] == ["힌트 1", "힌트 2", "힌트 3"]
+    registry.validate_params(intro.visual_type, intro.params)
+
+
 async def test_stage_scriptify_does_not_leak_final_answer_into_middle_note() -> None:
     plan = SolutionPlan(
         title="설명 단계가 포함된 풀이",
