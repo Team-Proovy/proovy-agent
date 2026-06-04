@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 
+from proovy_agent.features.video.exceptions import InvalidStageOutputError
 from proovy_agent.features.video.models import (
     ScriptSegment,
     SegmentTTSResult,
@@ -103,6 +104,33 @@ def test_phase_a_registry_registers_renderable_template_contracts() -> None:
         assert output.diagnostics["uses_cjk_tex_template"] is True
         _assert_smoke_source(output)
 
+    with pytest.raises(ValueError, match=r"params.hints must contain at most 3 items"):
+        registry.validate_params(
+            "intro_problem",
+            {
+                **_sample_params("intro_problem"),
+                "hints": ["조건 1", "조건 2", "조건 3", "조건 4"],
+            },
+        )
+
+    with pytest.raises(ValueError, match=r"params.summary must contain at least 1 items"):
+        registry.validate_params(
+            "outro_summary",
+            {
+                **_sample_params("outro_summary"),
+                "summary": [],
+            },
+        )
+
+    with pytest.raises(ValueError, match=r"params.summary must contain at most 4 items"):
+        registry.validate_params(
+            "outro_summary",
+            {
+                **_sample_params("outro_summary"),
+                "summary": ["1", "2", "3", "4", "5"],
+            },
+        )
+
 
 def test_phase_a_template_smoke_sources_cover_cjk_and_math() -> None:
     registry = create_phase_a_visual_type_registry()
@@ -154,11 +182,49 @@ async def test_stage_render_attaches_phase_a_template_diagnostics() -> None:
         PHASE_A_DETERMINISTIC_VISUAL_TYPES
     )
     for rendered_segment in rendered_segments:
+        assert rendered_segment.diagnostics["dry_run"] is True
+        assert rendered_segment.diagnostics["render_mode"] == "template_source"
         template = rendered_segment.diagnostics["template"]
         assert isinstance(template, Mapping)
         assert template["kind"] == "manim_source"
         assert template["visual_type"] == rendered_segment.visual_type
         assert "class " in str(template["manim_source"])
+
+
+async def test_stage_render_includes_template_render_error_details() -> None:
+    script = VideoScript(
+        title="일차방정식 풀이",
+        segments=[
+            ScriptSegment(
+                segment_id="outro",
+                order=1,
+                visual_type="outro_summary",
+                narration="풀이를 요약합니다.",
+                params={
+                    "summary": [],
+                    "visual_description": "빈 요약은 렌더할 수 없습니다.",
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(InvalidStageOutputError) as exc_info:
+        await stage_render(
+            script,
+            [SegmentTTSResult(segment_id="outro", narration="풀이를 요약합니다.")],
+            job=VideoPipelineJob(
+                job_id="job-1",
+                input_snapshot=VideoJobInput(problem_text="한국어 문제: 2x + 1 = 7을 풀어라."),
+            ),
+            ctx=StageContext(),
+        )
+
+    assert exc_info.value.details == {
+        "segment_id": "outro",
+        "visual_type": "outro_summary",
+        "error": "params.summary must contain at least 1 items",
+        "error_type": "ValueError",
+    }
 
 
 def test_phase_a_cjk_mathtex_smoke_render_when_manim_stack_available(tmp_path) -> None:

@@ -42,3 +42,8 @@ sprint: ""
 ## 리스크 / 메모
 
 - timestamp 정밀도가 Inworld WORD 단위에 의존 (§4 핵심 가치)
+- 2026-06-04 PR #122 review follow-up: `stage_render`의
+  `diagnostics["timeline"]` 생성은 완료됐지만, deterministic template
+  `manim_source`는 아직 timeline event를 `self.wait(...)` / `Indicate(...)`로
+  주입하지 않는다. 실제 renderer/worker가 template source를 소비하는 단계에서
+  timeline → scene 주입 계약을 명시하고 테스트한다.

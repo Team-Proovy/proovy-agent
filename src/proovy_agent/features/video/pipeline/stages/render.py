@@ -53,6 +53,7 @@ async def stage_render(
         tts_result = tts_by_segment_id[segment.segment_id]
         diagnostics: dict[str, object] = {
             "dry_run": True,
+            "render_mode": "dry_run",
             "timeline": _build_timeline_diagnostics(
                 segment_params=segment.params,
                 tts_result=tts_result,
@@ -65,6 +66,7 @@ async def stage_render(
         }
         template_diagnostics = _render_template_diagnostics(segment, ctx=ctx)
         if template_diagnostics is not None:
+            diagnostics["render_mode"] = "template_source"
             diagnostics["template"] = template_diagnostics
         rendered_segments.append(
             RenderedSegment(
@@ -94,7 +96,12 @@ def _render_template_diagnostics(
             "visual_type template render failed",
             stage=StageName.RENDER,
             user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
-            details={"segment_id": segment.segment_id, "visual_type": segment.visual_type},
+            details={
+                "segment_id": segment.segment_id,
+                "visual_type": segment.visual_type,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
         ) from exc
     return _template_output_to_diagnostics(output)
 

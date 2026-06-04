@@ -42,3 +42,7 @@ sprint: ""
 - allowlist가 좁아 정상 manim 패턴을 거부할 수 있음 — 케이스 수집해 화이트리스트 보강
 - **`sympy`는 의도적 제외**: graph_plot DSL의 sympy는 워커(트러스트)에서 도므로 allowlist 무관(#3.02), visual_scene(untrusted)엔 `sympify`/`parse_expr` eval성 위험 → 기본 제외, 수요 입증 시 안전 subset만 검토
 - AST는 자유 영역(`visual_scene`)에만 적용. deterministic 템플릿/`graph_plot` DSL은 대상 아님
+- 2026-06-04 PR #122 review follow-up: Python AST allowlist는 TeX 문자열 자체를
+  검증하지 않는다. renderer에서 LaTeX/MathTex 명령 allowlist를 별도로 두기로
+  결정하면 `\input{}` 등 위험 명령 차단 규칙을 2.05 sandbox audit과 함께
+  테스트한다.

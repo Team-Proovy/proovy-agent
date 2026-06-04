@@ -19,10 +19,21 @@ PHASE_A_DETERMINISTIC_VISUAL_TYPES: tuple[str, ...] = (
     "outro_summary",
 )
 
-_STRING_ARRAY_SCHEMA: dict[str, object] = {
-    "type": "array",
-    "items": {"type": "string"},
-}
+
+def _string_array_schema(
+    *,
+    min_items: int | None = None,
+    max_items: int | None = None,
+) -> dict[str, object]:
+    schema: dict[str, object] = {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    if min_items is not None:
+        schema["minItems"] = min_items
+    if max_items is not None:
+        schema["maxItems"] = max_items
+    return schema
 
 
 def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
@@ -36,8 +47,8 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
                 "title": {"type": "string"},
                 "problem_text": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "hints": _STRING_ARRAY_SCHEMA,
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "hints": _string_array_schema(max_items=3),
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -59,7 +70,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "properties": {
                 "latex_expression": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -84,7 +95,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
                     "maxItems": 5,
                 },
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -104,7 +115,7 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "properties": {
                 "result_latex": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },
@@ -122,10 +133,10 @@ def register_phase_a_visual_types(registry: VisualTypeRegistry) -> None:
             "type": "object",
             "required": ["summary", "visual_description"],
             "properties": {
-                "summary": _STRING_ARRAY_SCHEMA,
+                "summary": _string_array_schema(min_items=1, max_items=4),
                 "final_answer": {"type": "string"},
                 "visual_description": {"type": "string"},
-                "emphasis_targets": _STRING_ARRAY_SCHEMA,
+                "emphasis_targets": _string_array_schema(),
             },
             "additionalProperties": False,
         },

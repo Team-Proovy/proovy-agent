@@ -32,10 +32,12 @@ sprint: ""
 - [ ] 시크릿 env 미전달
 - [ ] platform-features 격리 Cloud Run 검증 (read-only rootfs 노브 없음 → 볼륨+일회성으로 대체)
 - [ ] sandbox smoke 테스트: 워크스페이스 외 write · fork 폭탄 · 메모리/시간 초과 차단
+- [ ] MathTex/TeX 입력의 `\input{}` 등 파일 접근성 위험 명령이 워크스페이스 밖 파일·시크릿을 읽지 못하는지 sandbox audit에 포함
 
 ## Definition of Done
 
 - [ ] 허용 외 FS write / 자원 한도 초과가 모두 차단되어 잡 실패로 처리 (§0.5 sandbox 위반 100% 차단)
+- [ ] TeX 위험 명령 audit이 통과하고 실패 원인이 render diagnostics에 남는다
 - [ ] 자동화된 테스트(sandbox audit) 통과
 
 ## 리스크 / 메모
