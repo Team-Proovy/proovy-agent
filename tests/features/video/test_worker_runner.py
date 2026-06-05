@@ -14,6 +14,7 @@ from proovy_agent.features.video.models import (
     SolutionPlan,
     SolutionStep,
     StageName,
+    VideoJob,
     VideoJobInput,
     VideoJobStatus,
     VideoPipelineJob,
@@ -33,21 +34,33 @@ class _RecordingRepository(InMemoryVideoJobRepository):
         super().__init__()
         self.progress_writes: list[tuple[StageName | None, dict[str, int]]] = []
 
-    async def update_progress(
+    async def update_progress_for_lease(
         self,
         job_id: str,
         *,
+        instance_id: str,
         stage: StageName | None = None,
         progress: Mapping[str, int] | None = None,
         status: VideoJobStatus | None = None,
     ):
         self.progress_writes.append((stage, dict(progress or {})))
-        return await super().update_progress(
+        return await super().update_progress_for_lease(
             job_id,
+            instance_id=instance_id,
             stage=stage,
             progress=progress,
             status=status,
         )
+
+
+class _HeartbeatFailsRepository(InMemoryVideoJobRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.heartbeat_calls = 0
+
+    async def heartbeat_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
+        self.heartbeat_calls += 1
+        return None
 
 
 def _sample_plan() -> SolutionPlan:
@@ -182,6 +195,66 @@ async def test_repository_lease_expiry_takeover_and_self_fence() -> None:
     assert stale_heartbeat is None
 
 
+async def test_worker_runner_marks_live_foreign_lease_as_busy_skip() -> None:
+    """MVP에서는 live foreign lease 중복 delivery를 ack하되 outcome을 분리한다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    await repository.acquire_lease(
+        job.id,
+        instance_id="worker-a",
+        attempt_id="attempt-a",
+        lease_stale_after_seconds=60,
+    )
+    runner = VideoWorkerRunner(repository, instance_id="worker-b")
+
+    result = await runner.run(job.id)
+
+    assert result.status is VideoWorkerRunStatus.SKIPPED_BUSY
+    assert result.job_status is VideoJobStatus.RUNNING
+
+
+async def test_worker_progress_write_requires_current_lease_holder() -> None:
+    """lease를 잃은 worker의 in-flight progress write는 새 holder 상태를 덮지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    await repository.acquire_lease(
+        job.id,
+        instance_id="worker-a",
+        attempt_id="attempt-a",
+        lease_stale_after_seconds=60,
+    )
+    stolen = await repository.acquire_lease(
+        job.id,
+        instance_id="worker-b",
+        attempt_id="attempt-b",
+        lease_stale_after_seconds=0,
+    )
+
+    stale_update = await repository.update_progress_for_lease(
+        job.id,
+        instance_id="worker-a",
+        status=VideoJobStatus.RUNNING,
+        stage=StageName.RENDER,
+        progress={"segments_done": 99, "segments_total": 99},
+    )
+    loaded = await repository.get(job.id)
+
+    assert stolen is not None
+    assert stale_update is None
+    assert loaded is not None
+    assert loaded.lease_holder_instance_id == "worker-b"
+    assert loaded.stage is None
+    assert loaded.progress == {}
+
+
 async def test_runner_self_fences_when_lease_is_stolen() -> None:
     """worker heartbeat가 lease 탈취를 감지하면 terminal write 없이 중단한다."""
     repository = InMemoryVideoJobRepository()
@@ -223,6 +296,78 @@ async def test_runner_self_fences_when_lease_is_stolen() -> None:
     assert loaded is not None
     assert loaded.status is VideoJobStatus.RUNNING
     assert loaded.lease_holder_instance_id == "worker-b"
+
+
+async def test_runner_does_not_finalize_success_after_lease_is_stolen() -> None:
+    """성공 직후에도 lease를 잃었으면 stale worker가 artifact를 terminal로 쓰지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def stealing_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.SOLVE, "started")
+        stolen = await repository.acquire_lease(
+            job.job_id,
+            instance_id="worker-b",
+            attempt_id="attempt-b",
+            lease_stale_after_seconds=0,
+        )
+        assert stolen is not None
+        return _empty_result(job)
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-a",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=stealing_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.SELF_FENCED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.RUNNING
+    assert loaded.lease_holder_instance_id == "worker-b"
+    assert loaded.artifact_object_key is None
+
+
+async def test_runner_success_finalize_is_guarded_without_post_pipeline_heartbeat() -> None:
+    """성공 terminal write는 별도 heartbeat gate가 아니라 lease-guarded finalize로 확정한다."""
+    repository = _HeartbeatFailsRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def quick_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.SOLVE, "started")
+        await ctx.emit_stage_event(StageName.SOLVE, "completed")
+        return _empty_result(job)
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-a",
+        heartbeat_interval_seconds=60,
+        cancel_poll_interval_seconds=60,
+        job_max_runtime_seconds=5,
+        pipeline_runner=quick_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.COMPLETED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.SUCCEEDED
+    assert loaded.lease_holder_instance_id is None
+    assert repository.heartbeat_calls == 0
 
 
 async def test_cancel_poll_marks_running_job_canceled() -> None:

@@ -131,6 +131,17 @@ class VideoJobRepository(Protocol):
     ) -> VideoJob:
         """Update the hot progress fields for a single job."""
 
+    async def update_progress_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        stage: StageName | None = None,
+        progress: Mapping[str, int] | None = None,
+        status: VideoJobStatus | None = None,
+    ) -> VideoJob | None:
+        """Update worker progress only when the caller still owns the lease."""
+
     async def finalize(
         self,
         job_id: str,
@@ -143,6 +154,20 @@ class VideoJobRepository(Protocol):
         cost: Mapping[str, float] | None = None,
     ) -> VideoJob:
         """Mark a job as terminal."""
+
+    async def finalize_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        status: VideoJobStatus,
+        artifact_object_key: str | None = None,
+        error_stage: StageName | None = None,
+        user_error_code: UserErrorCode | None = None,
+        error_detail: str | None = None,
+        cost: Mapping[str, float] | None = None,
+    ) -> VideoJob | None:
+        """Mark a leased job as terminal only when the caller still owns it."""
 
     async def request_cancel(self, job_id: str) -> VideoJob:
         """Request cancellation; queued jobs may become terminal later."""
@@ -299,6 +324,35 @@ class InMemoryVideoJobRepository:
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
+    async def update_progress_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        stage: StageName | None = None,
+        progress: Mapping[str, int] | None = None,
+        status: VideoJobStatus | None = None,
+    ) -> VideoJob | None:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return None
+            if job.lease_holder_instance_id != instance_id:
+                return None
+
+            update: dict[str, object] = {"progress_updated_at": now_utc()}
+            if stage is not None:
+                update["stage"] = stage
+            if progress is not None:
+                update["progress"] = dict(progress)
+            if status is not None:
+                update["status"] = status
+                if status is VideoJobStatus.RUNNING and job.started_at is None:
+                    update["started_at"] = update["progress_updated_at"]
+            updated = _validated_job_update(job, update)
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
     async def finalize(
         self,
         job_id: str,
@@ -322,6 +376,45 @@ class InMemoryVideoJobRepository:
                 job,
                 {
                     "status": status,
+                    "artifact_object_key": artifact_object_key,
+                    "error_stage": error_stage,
+                    "user_error_code": user_error_code,
+                    "error_detail": error_detail,
+                    "cost": dict(cost or job.cost),
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                },
+            )
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
+    async def finalize_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        status: VideoJobStatus,
+        artifact_object_key: str | None = None,
+        error_stage: StageName | None = None,
+        user_error_code: UserErrorCode | None = None,
+        error_detail: str | None = None,
+        cost: Mapping[str, float] | None = None,
+    ) -> VideoJob | None:
+        if status not in TERMINAL_JOB_STATUSES:
+            raise VideoJobStoreError("finalize requires a terminal job status")
+
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return _copy_job(job)
+            if job.lease_holder_instance_id != instance_id:
+                return None
+
+            updated = _validated_job_update(
+                job,
+                {
+                    "status": status,
+                    "lease_holder_instance_id": None,
                     "artifact_object_key": artifact_object_key,
                     "error_stage": error_stage,
                     "user_error_code": user_error_code,
@@ -620,6 +713,63 @@ class PostgresVideoJobRepository:
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
 
+    async def update_progress_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        stage: StageName | None = None,
+        progress: Mapping[str, int] | None = None,
+        status: VideoJobStatus | None = None,
+    ) -> VideoJob | None:
+        existing = await self.get(job_id)
+        if existing is None:
+            raise VideoJobNotFoundError(job_id)
+        if existing.status in TERMINAL_JOB_STATUSES:
+            return None
+
+        next_stage = stage if stage is not None else existing.stage
+        next_progress = dict(progress) if progress is not None else existing.progress
+        next_status = status if status is not None else existing.status
+        started_at = existing.started_at
+        if next_status is VideoJobStatus.RUNNING and started_at is None:
+            started_at = now_utc()
+
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET stage = %(stage)s,
+                    progress = %(progress)s,
+                    status = %(status)s,
+                    started_at = %(started_at)s,
+                    progress_updated_at = %(progress_updated_at)s
+                WHERE id = %(id)s
+                  AND lease_holder_instance_id = %(instance_id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "instance_id": instance_id,
+                    "stage": next_stage.value if next_stage is not None else None,
+                    "progress": Jsonb(next_progress),
+                    "status": next_status.value,
+                    "started_at": started_at,
+                    "progress_updated_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                return _row_to_job(row)
+
+        refreshed = await self.get(job_id)
+        if refreshed is None:
+            raise VideoJobNotFoundError(job_id)
+        if refreshed.status in TERMINAL_JOB_STATUSES:
+            return None
+        return None
+
     async def finalize(
         self,
         job_id: str,
@@ -677,6 +827,71 @@ class PostgresVideoJobRepository:
                     return refreshed
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
+
+    async def finalize_for_lease(
+        self,
+        job_id: str,
+        *,
+        instance_id: str,
+        status: VideoJobStatus,
+        artifact_object_key: str | None = None,
+        error_stage: StageName | None = None,
+        user_error_code: UserErrorCode | None = None,
+        error_detail: str | None = None,
+        cost: Mapping[str, float] | None = None,
+    ) -> VideoJob | None:
+        if status not in TERMINAL_JOB_STATUSES:
+            raise VideoJobStoreError("finalize requires a terminal job status")
+
+        existing = await self.get(job_id)
+        if existing is None:
+            raise VideoJobNotFoundError(job_id)
+        if existing.status in TERMINAL_JOB_STATUSES:
+            return existing
+
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET status = %(status)s,
+                    lease_holder_instance_id = NULL,
+                    artifact_object_key = %(artifact_object_key)s,
+                    error_stage = %(error_stage)s,
+                    user_error_code = %(user_error_code)s,
+                    error_detail = %(error_detail)s,
+                    cost = %(cost)s,
+                    progress_updated_at = %(progress_updated_at)s,
+                    finished_at = %(finished_at)s
+                WHERE id = %(id)s
+                  AND lease_holder_instance_id = %(instance_id)s
+                  AND status NOT IN ('succeeded', 'failed', 'canceled')
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "instance_id": instance_id,
+                    "status": status.value,
+                    "artifact_object_key": artifact_object_key,
+                    "error_stage": error_stage.value if error_stage is not None else None,
+                    "user_error_code": user_error_code.value
+                    if user_error_code is not None
+                    else None,
+                    "error_detail": error_detail,
+                    "cost": Jsonb(dict(cost or existing.cost)),
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                return _row_to_job(row)
+
+        refreshed = await self.get(job_id)
+        if refreshed is None:
+            raise VideoJobNotFoundError(job_id)
+        if refreshed.status in TERMINAL_JOB_STATUSES:
+            return refreshed
+        return None
 
     async def request_cancel(self, job_id: str) -> VideoJob:
         existing = await self.get(job_id)

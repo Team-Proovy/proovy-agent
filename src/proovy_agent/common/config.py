@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     video_cancel_poll_interval_seconds: float = Field(default=10.0, gt=0)
     video_job_max_runtime_seconds: float = Field(default=1200.0, gt=0)
     video_worker_instance_id: str = Field(default="", validation_alias="VIDEO_WORKER_INSTANCE_ID")
+    video_worker_auth_token: str = Field(default="", validation_alias="VIDEO_WORKER_AUTH_TOKEN")
 
     model_config = SettingsConfigDict(
         env_file=".env",

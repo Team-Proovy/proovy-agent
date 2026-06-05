@@ -63,6 +63,7 @@ class VideoWorkerRunStatus(StrEnum):
     RETRY_REQUESTED = "retry_requested"
     SELF_FENCED = "self_fenced"
     SKIPPED = "skipped"
+    SKIPPED_BUSY = "skipped_busy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,21 +104,26 @@ class _WorkerProgressWriter:
         *,
         repository: VideoJobRepository,
         job_id: str,
+        instance_id: str,
         cancel_event: asyncio.Event,
     ) -> None:
         self._repository = repository
         self._job_id = job_id
+        self._instance_id = instance_id
         self._cancel_event = cancel_event
         self.current_stage: StageName | None = None
 
     async def handle_stage_event(self, event: StageEvent) -> None:
         self.current_stage = event.stage
-        await self._repository.update_progress(
+        updated = await self._repository.update_progress_for_lease(
             self._job_id,
+            instance_id=self._instance_id,
             status=VideoJobStatus.RUNNING,
             stage=event.stage,
             progress=_stage_progress(event),
         )
+        if updated is None:
+            raise _LeaseLostError
         if event.status == "completed":
             await self.sync_cancel_event()
         elif event.status == "started" and await self.sync_cancel_event():
@@ -125,12 +131,15 @@ class _WorkerProgressWriter:
 
     async def handle_segment_progress(self, event: SegmentProgressEvent) -> None:
         self.current_stage = event.stage
-        await self._repository.update_progress(
+        updated = await self._repository.update_progress_for_lease(
             self._job_id,
+            instance_id=self._instance_id,
             status=VideoJobStatus.RUNNING,
             stage=event.stage,
             progress=_segment_progress(event),
         )
+        if updated is None:
+            raise _LeaseLostError
         if await self.sync_cancel_event():
             raise asyncio.CancelledError
 
@@ -181,9 +190,10 @@ class VideoWorkerRunner:
         )
         if job is None:
             skipped = await self._repository.get(job_id)
+            skip_status = self._skip_status(skipped)
             return VideoWorkerRunResult(
                 job_id=job_id,
-                status=VideoWorkerRunStatus.SKIPPED,
+                status=skip_status,
                 job_status=skipped.status if skipped is not None else None,
             )
 
@@ -192,10 +202,13 @@ class VideoWorkerRunner:
         progress_writer = _WorkerProgressWriter(
             repository=self._repository,
             job_id=job_id,
+            instance_id=self._instance_id,
             cancel_event=cancel_event,
         )
         if await progress_writer.sync_cancel_event():
             canceled = await self._finalize_canceled(job_id)
+            if canceled is None or canceled.status is not VideoJobStatus.CANCELED:
+                return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
             return VideoWorkerRunResult(
                 job_id=job_id,
                 status=VideoWorkerRunStatus.CANCELED,
@@ -221,14 +234,11 @@ class VideoWorkerRunner:
                 progress_writer=progress_writer,
             )
         except _LeaseLostError:
-            return VideoWorkerRunResult(
-                job_id=job_id,
-                status=VideoWorkerRunStatus.SELF_FENCED,
-                job_status=VideoJobStatus.RUNNING,
-                attempt_id=active_attempt_id,
-            )
+            return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
         except (_CancelRequestedError, asyncio.CancelledError):
             canceled = await self._finalize_canceled(job_id)
+            if canceled is None or canceled.status is not VideoJobStatus.CANCELED:
+                return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
             return VideoWorkerRunResult(
                 job_id=job_id,
                 status=VideoWorkerRunStatus.CANCELED,
@@ -245,6 +255,8 @@ class VideoWorkerRunner:
                 exc=exc,
                 fallback_stage=progress_writer.current_stage,
             )
+            if failed is None or failed.status is not VideoJobStatus.FAILED:
+                return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
             return VideoWorkerRunResult(
                 job_id=job_id,
                 status=VideoWorkerRunStatus.FAILED,
@@ -252,16 +264,9 @@ class VideoWorkerRunner:
                 attempt_id=active_attempt_id,
             )
 
-        if await self._repository.heartbeat_lease(job_id, instance_id=self._instance_id) is None:
-            return VideoWorkerRunResult(
-                job_id=job_id,
-                status=VideoWorkerRunStatus.SELF_FENCED,
-                job_status=VideoJobStatus.RUNNING,
-                attempt_id=active_attempt_id,
-            )
-
-        succeeded = await self._repository.finalize(
+        succeeded = await self._repository.finalize_for_lease(
             job_id,
+            instance_id=self._instance_id,
             status=VideoJobStatus.SUCCEEDED,
             artifact_object_key=_final_artifact_key(
                 job_id,
@@ -269,12 +274,12 @@ class VideoWorkerRunner:
                 output_path=result.final_video.output_path,
             ),
         )
-        released = await self._repository.release_lease(job_id, instance_id=self._instance_id)
-        final_job = released or succeeded
+        if succeeded is None or succeeded.status is not VideoJobStatus.SUCCEEDED:
+            return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
         return VideoWorkerRunResult(
             job_id=job_id,
             status=VideoWorkerRunStatus.COMPLETED,
-            job_status=final_job.status,
+            job_status=succeeded.status,
             attempt_id=active_attempt_id,
         )
 
@@ -325,10 +330,39 @@ class VideoWorkerRunner:
             if await progress_writer.sync_cancel_event():
                 raise _CancelRequestedError
 
-    async def _finalize_canceled(self, job_id: str) -> VideoJob:
-        canceled = await self._repository.finalize(job_id, status=VideoJobStatus.CANCELED)
-        released = await self._repository.release_lease(job_id, instance_id=self._instance_id)
-        return released or canceled
+    def _skip_status(self, job: VideoJob | None) -> VideoWorkerRunStatus:
+        if job is None or job.status in {
+            VideoJobStatus.SUCCEEDED,
+            VideoJobStatus.FAILED,
+            VideoJobStatus.CANCELED,
+        }:
+            return VideoWorkerRunStatus.SKIPPED
+        if (
+            job.lease_holder_instance_id is not None
+            and job.lease_holder_instance_id != self._instance_id
+        ):
+            return VideoWorkerRunStatus.SKIPPED_BUSY
+        return VideoWorkerRunStatus.SKIPPED
+
+    def _self_fenced_result(
+        self,
+        job_id: str,
+        *,
+        active_attempt_id: str,
+    ) -> VideoWorkerRunResult:
+        return VideoWorkerRunResult(
+            job_id=job_id,
+            status=VideoWorkerRunStatus.SELF_FENCED,
+            job_status=VideoJobStatus.RUNNING,
+            attempt_id=active_attempt_id,
+        )
+
+    async def _finalize_canceled(self, job_id: str) -> VideoJob | None:
+        return await self._repository.finalize_for_lease(
+            job_id,
+            instance_id=self._instance_id,
+            status=VideoJobStatus.CANCELED,
+        )
 
     async def _finalize_failed(
         self,
@@ -336,22 +370,21 @@ class VideoWorkerRunner:
         *,
         exc: Exception,
         fallback_stage: StageName | None,
-    ) -> VideoJob:
+    ) -> VideoJob | None:
         error_stage = fallback_stage
         user_error_code = UserErrorCode.UNKNOWN
         if isinstance(exc, PipelineError):
             error_stage = exc.stage or error_stage
             user_error_code = exc.user_error_code
 
-        failed = await self._repository.finalize(
+        return await self._repository.finalize_for_lease(
             job_id,
+            instance_id=self._instance_id,
             status=VideoJobStatus.FAILED,
             error_stage=error_stage,
             user_error_code=user_error_code,
             error_detail=type(exc).__name__,
         )
-        released = await self._repository.release_lease(job_id, instance_id=self._instance_id)
-        return released or failed
 
 
 def _stage_progress(event: StageEvent) -> dict[str, int]:

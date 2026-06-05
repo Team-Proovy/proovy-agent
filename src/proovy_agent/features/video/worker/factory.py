@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import uuid
 
 from proovy_agent.features.video.jobs.repository import (
-    InMemoryVideoJobRepository,
     PostgresVideoJobRepository,
 )
 from proovy_agent.features.video.worker.runner import VideoWorkerRunner
@@ -18,13 +17,10 @@ if TYPE_CHECKING:
 
 def create_video_worker_runner(settings: Settings) -> VideoWorkerRunner:
     """Create the default worker runner for the current runtime settings."""
-    if settings.database_url:
-        repository = PostgresVideoJobRepository(settings.database_url)
-    elif settings.debug:
-        repository = InMemoryVideoJobRepository()
-    else:
-        raise RuntimeError("database_url must be set for video worker outside debug mode")
+    if not settings.database_url:
+        raise RuntimeError("database_url must be set for video worker")
 
+    repository = PostgresVideoJobRepository(settings.database_url)
     return VideoWorkerRunner(
         repository,
         instance_id=settings.video_worker_instance_id or _default_instance_id(),
