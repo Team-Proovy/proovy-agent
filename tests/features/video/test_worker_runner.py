@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from proovy_agent.features.video.jobs import InMemoryVideoJobRepository
@@ -193,6 +194,42 @@ async def test_repository_lease_expiry_takeover_and_self_fence() -> None:
     assert stolen.lease_holder_instance_id == "worker-b"
     assert stolen.active_attempt_id == "attempt-b"
     assert stale_heartbeat is None
+
+
+async def test_request_cancel_does_not_refresh_lease_liveness() -> None:
+    """cancel signal은 lease heartbeat가 아니므로 stale takeover 시간을 연장하지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    leased = await repository.acquire_lease(
+        job.id,
+        instance_id="worker-a",
+        attempt_id="attempt-a",
+        lease_stale_after_seconds=60,
+    )
+    assert leased is not None
+
+    stale_timestamp = datetime.now(UTC) - timedelta(seconds=120)
+    repository._jobs[job.id] = repository._jobs[job.id].model_copy(
+        update={"progress_updated_at": stale_timestamp}
+    )
+
+    canceled = await repository.request_cancel(job.id)
+    stolen = await repository.acquire_lease(
+        job.id,
+        instance_id="worker-b",
+        attempt_id="attempt-b",
+        lease_stale_after_seconds=60,
+    )
+
+    assert canceled.cancel_requested is True
+    assert canceled.progress_updated_at == stale_timestamp
+    assert stolen is not None
+    assert stolen.lease_holder_instance_id == "worker-b"
+    assert stolen.cancel_requested is True
 
 
 async def test_worker_runner_marks_live_foreign_lease_as_busy_skip() -> None:
@@ -441,3 +478,38 @@ async def test_stage_boundary_cancel_is_checked_before_next_stage() -> None:
     assert loaded is not None
     assert loaded.status is VideoJobStatus.CANCELED
     assert loaded.stage is StageName.SOLVE
+
+
+async def test_final_stage_completed_cancel_is_checked_before_success() -> None:
+    """최종 stage 완료 직후 cancel_requested가 보이면 succeeded로 finalize하지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def final_stage_pipeline(
+        job: VideoPipelineJob, *, ctx: StageContext
+    ) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.COMPOSE, "started")
+        await repository.request_cancel(job.job_id)
+        await ctx.emit_stage_event(StageName.COMPOSE, "completed")
+        return _empty_result(job)
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=final_stage_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.CANCELED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.CANCELED
+    assert loaded.artifact_object_key is None

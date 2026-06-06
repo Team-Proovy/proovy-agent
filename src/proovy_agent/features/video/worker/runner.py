@@ -125,7 +125,8 @@ class _WorkerProgressWriter:
         if updated is None:
             raise _LeaseLostError
         if event.status == "completed":
-            await self.sync_cancel_event()
+            if await self.sync_cancel_event():
+                raise asyncio.CancelledError
         elif event.status == "started" and await self.sync_cancel_event():
             raise asyncio.CancelledError
 

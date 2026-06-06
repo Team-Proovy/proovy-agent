@@ -15,6 +15,7 @@ from proovy_agent.features.video.models import (
 from proovy_agent.features.video.worker.factory import create_video_worker_runner
 from proovy_agent.features.video.worker.runner import (
     VideoWorkerRetryableError,
+    VideoWorkerRunner,
     VideoWorkerRunStatus,
 )
 
@@ -44,7 +45,7 @@ class RunVideoJobResponse(BaseModel):
     attempt_id: str | None = None
 
 
-def _get_video_worker_runner(request: Request):
+def _get_video_worker_runner(request: Request) -> VideoWorkerRunner:
     runner = getattr(request.app.state, "video_worker_runner", None)
     if runner is not None:
         return runner

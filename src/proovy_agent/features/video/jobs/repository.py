@@ -432,10 +432,7 @@ class InMemoryVideoJobRepository:
             job = self._require_job_locked(job_id)
             if job.status in TERMINAL_JOB_STATUSES:
                 return _copy_job(job)
-            updated = _validated_job_update(
-                job,
-                {"cancel_requested": True, "progress_updated_at": now_utc()},
-            )
+            updated = _validated_job_update(job, {"cancel_requested": True})
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
@@ -904,13 +901,12 @@ class PostgresVideoJobRepository:
             cur = await conn.execute(
                 """
                 UPDATE video_jobs
-                SET cancel_requested = TRUE,
-                    progress_updated_at = %(progress_updated_at)s
+                SET cancel_requested = TRUE
                 WHERE id = %(id)s
                   AND status NOT IN ('succeeded', 'failed', 'canceled')
                 RETURNING *
                 """,
-                {"id": job_id, "progress_updated_at": now_utc()},
+                {"id": job_id},
             )
             row = await cur.fetchone()
             if row is None:
