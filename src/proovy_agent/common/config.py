@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     video_render_workspace_size_limit_mb: int = Field(default=512, gt=0)
     video_render_manim_binary: str = Field(default="manim", validation_alias="VIDEO_RENDER_MANIM")
     video_render_manim_quality_flag: str = "-ql"
+    video_cjk_font: str = Field(default="Noto Sans CJK KR", validation_alias="VIDEO_CJK_FONT")
     video_render_require_non_root: bool = True
     video_render_require_landlock: bool = True
 

@@ -1,0 +1,67 @@
+name: Worker image
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile.worker"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/proovy_agent/**"
+      - ".github/workflows/worker-image.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "Dockerfile.worker"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/proovy_agent/**"
+      - ".github/workflows/worker-image.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LOCAL_IMAGE: proovy-agent-worker:${{ github.sha }}
+      WORKER_IMAGE_NAME: ${{ secrets.SERVICE_NAME_WORKER || format('{0}-worker', secrets.SERVICE_NAME_AGENT) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build worker Docker image
+        run: docker build -f Dockerfile.worker -t "${LOCAL_IMAGE}" .
+
+      - name: Run worker startup healthcheck
+        run: |
+          docker run --rm --entrypoint python "${LOCAL_IMAGE}" \
+            -m proovy_agent.features.video.worker.healthcheck --startup
+
+      - name: Authenticate to GCP
+        if: github.event_name == 'push'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: github.event_name == 'push'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        if: github.event_name == 'push'
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Push worker Docker image
+        if: github.event_name == 'push'
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.AR_REPO_AGENT }}/${WORKER_IMAGE_NAME}:${{ github.sha }}"
+          docker tag "${LOCAL_IMAGE}" "${IMAGE}"
+          docker push "${IMAGE}"

@@ -1,0 +1,65 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080 \
+    VIDEO_RENDER_WORKSPACE_ROOT=/tmp/proovy-video-worker-render \
+    PATH="/app/.venv/bin:${PATH}" \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin renderer
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    dvisvgm \
+    ffmpeg \
+    fontconfig \
+    fonts-noto-cjk \
+    fonts-noto-core \
+    ghostscript \
+    libcairo2 \
+    libcairo2-dev \
+    libffi-dev \
+    libfontconfig1 \
+    libpango-1.0-0 \
+    libpango1.0-dev \
+    libpangocairo-1.0-0 \
+    pkg-config \
+    texlive-fonts-recommended \
+    texlive-lang-chinese \
+    texlive-lang-cjk \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-xetex \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --extra worker --no-install-project
+
+COPY . .
+RUN uv sync --frozen --no-dev --extra worker \
+    && uv cache clean \
+    && apt-get purge -y --auto-remove \
+        build-essential \
+        libcairo2-dev \
+        libffi-dev \
+        libpango1.0-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/* /tmp/* \
+    && mkdir -p "${VIDEO_RENDER_WORKSPACE_ROOT}" \
+    && chown -R renderer:renderer /app "${VIDEO_RENDER_WORKSPACE_ROOT}" /home/renderer
+
+USER renderer
+
+RUN python -m proovy_agent.features.video.worker.healthcheck --build
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=90s --start-period=120s --retries=3 \
+    CMD python -m proovy_agent.features.video.worker.healthcheck --startup
+
+CMD ["sh", "-c", "uvicorn proovy_agent.app.main:app --host 0.0.0.0 --port ${PORT}"]
