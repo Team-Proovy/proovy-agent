@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+import json
 from typing import TYPE_CHECKING
 
+from proovy_agent.features.video.exceptions import InvalidStageOutputError
 from proovy_agent.features.video.jobs import InMemoryVideoJobRepository
 from proovy_agent.features.video.models import (
     FinalVideoArtifact,
@@ -15,6 +17,7 @@ from proovy_agent.features.video.models import (
     SolutionPlan,
     SolutionStep,
     StageName,
+    UserErrorCode,
     VideoJob,
     VideoJobInput,
     VideoJobStatus,
@@ -23,6 +26,7 @@ from proovy_agent.features.video.models import (
     VideoScript,
 )
 from proovy_agent.features.video.worker import VideoWorkerRunner, VideoWorkerRunStatus
+from proovy_agent.features.video.worker.sandbox import RenderSandboxResourceLimitError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -155,6 +159,171 @@ async def test_worker_runner_runs_job_and_records_stage_and_segment_progress() -
         stage is StageName.RENDER and progress.get("segments_done", 0) > 0
         for stage, progress in repository.progress_writes
     )
+
+
+async def test_worker_runner_injects_render_sandbox_into_stage_context() -> None:
+    """worker render는 생성 코드를 직접 실행하지 않고 StageContext sandbox 경계를 쓴다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    render_sandbox = object()
+
+    async def sandbox_asserting_pipeline(
+        job: VideoPipelineJob,
+        *,
+        ctx: StageContext,
+    ) -> VideoPipelineResult:
+        assert ctx.sandbox is render_sandbox
+        await ctx.emit_stage_event(StageName.RENDER, "started")
+        await ctx.emit_stage_event(StageName.RENDER, "completed")
+        return _empty_result(job)
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=sandbox_asserting_pipeline,
+        render_sandbox=render_sandbox,
+    )
+
+    result = await runner.run(job.id)
+
+    assert result.status is VideoWorkerRunStatus.COMPLETED
+
+
+async def test_worker_runner_marks_render_sandbox_resource_limit_as_failed_job() -> None:
+    """resource limit 위반은 Cloud Tasks retry가 아니라 render 실패로 terminal 처리한다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def failing_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.RENDER, "started")
+        raise RenderSandboxResourceLimitError("render sub-process exceeded timeout")
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=failing_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.FAILED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.FAILED
+    assert loaded.error_stage is StageName.RENDER
+    assert loaded.user_error_code is UserErrorCode.RENDER_RESOURCE_LIMIT
+
+
+async def test_worker_runner_persists_latex_validation_diagnostics_on_failure() -> None:
+    """LaTeX audit 실패 원인은 내부 error_detail에 안전 JSON으로 남긴다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    latex_error = {
+        "message": "LaTeX command \\input is not allowed in render templates.",
+        "line": 3,
+        "column": 12,
+        "error_code": "latex_file_read",
+        "severity": "error",
+        "original_snippet": r"MathTex(r'\input{/etc/passwd}')",
+    }
+
+    async def failing_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.RENDER, "started")
+        raise InvalidStageOutputError(
+            "visual_type template failed LaTeX safety validation",
+            stage=StageName.RENDER,
+            user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+            details={"latex_validation_errors": [latex_error]},
+        )
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=failing_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.FAILED
+    assert loaded is not None
+    assert loaded.error_detail is not None
+    detail = json.loads(loaded.error_detail)
+    assert detail == {
+        "error_type": "InvalidStageOutputError",
+        "diagnostics": {"template": {"latex_validation_errors": [latex_error]}},
+    }
+
+
+async def test_worker_runner_keeps_large_latex_diagnostics_as_valid_bounded_json() -> None:
+    """큰 LaTeX audit 결과도 잘린 JSON 문자열이 되지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    latex_errors = [
+        {
+            "message": "unsafe latex command " + ("x" * 1000),
+            "line": index + 1,
+            "column": 1,
+            "error_code": "latex_file_read",
+            "severity": "error",
+            "original_snippet": "x" * 1000,
+        }
+        for index in range(20)
+    ]
+
+    async def failing_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.RENDER, "started")
+        raise InvalidStageOutputError(
+            "visual_type template failed LaTeX safety validation",
+            stage=StageName.RENDER,
+            user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+            details={"latex_validation_errors": latex_errors},
+        )
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=failing_pipeline,
+    )
+
+    await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert loaded is not None
+    assert loaded.error_detail is not None
+    assert len(loaded.error_detail) <= 8000
+    detail = json.loads(loaded.error_detail)
+    errors = detail["diagnostics"]["template"]["latex_validation_errors"]
+    assert 0 < len(errors) < len(latex_errors)
+    assert errors[0]["message"].startswith("unsafe latex command")
 
 
 async def test_repository_lease_expiry_takeover_and_self_fence() -> None:

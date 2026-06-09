@@ -81,15 +81,40 @@ async def stage_render(
                 ),
             ),
         }
+        video_path: str | None = None
         template_diagnostics = _render_template_diagnostics(segment, ctx=ctx)
         if template_diagnostics is not None:
             diagnostics["render_mode"] = "template_source"
             diagnostics["template"] = template_diagnostics
+            latex_validation_errors = template_diagnostics["latex_validation_errors"]
+            if latex_validation_errors:
+                raise InvalidStageOutputError(
+                    "visual_type template failed LaTeX safety validation",
+                    stage=StageName.RENDER,
+                    user_error_code=UserErrorCode.RENDER_UNRECOVERABLE,
+                    details={
+                        "segment_id": segment.segment_id,
+                        "visual_type": segment.visual_type,
+                        "latex_validation_errors": latex_validation_errors,
+                        "diagnostics": diagnostics,
+                    },
+                )
+            sandbox = _render_sandbox(ctx)
+            if sandbox is not None:
+                sandbox_result = await sandbox.render_manim_source(
+                    manim_source=str(template_diagnostics.get("manim_source", "")),
+                    scene_class_name=str(template_diagnostics.get("scene_class_name", "")),
+                    job_id=job.job_id,
+                    segment_id=segment.segment_id,
+                )
+                video_path = sandbox_result.output_path
+                diagnostics["render_mode"] = "sandbox_subprocess"
+                template_diagnostics["sandbox"] = sandbox_result.diagnostics
         rendered_segments.append(
             RenderedSegment(
                 segment_id=segment.segment_id,
                 visual_type=segment.visual_type,
-                video_path=None,
+                video_path=video_path,
                 duration_seconds=timing_adaptation.render_duration_seconds,
                 diagnostics=diagnostics,
             )
@@ -134,10 +159,28 @@ def _template_output_to_diagnostics(output: object) -> dict[str, object]:
     if callable(as_diagnostics):
         diagnostics = as_diagnostics()
         if isinstance(diagnostics, Mapping):
-            return dict(diagnostics)
+            return _with_latex_validation(dict(diagnostics))
     if isinstance(output, Mapping):
-        return dict(output)
-    return {"kind": type(output).__name__, "repr": repr(output)}
+        return _with_latex_validation(dict(output))
+    return _with_latex_validation({"kind": type(output).__name__, "repr": repr(output)})
+
+
+def _with_latex_validation(diagnostics: dict[str, object]) -> dict[str, object]:
+    from proovy_agent.features.video.worker.sandbox import audit_latex_source
+
+    source = diagnostics.get("manim_source")
+    diagnostics["latex_validation_errors"] = (
+        audit_latex_source(source) if isinstance(source, str) else []
+    )
+    return diagnostics
+
+
+def _render_sandbox(ctx: StageContext) -> object | None:
+    sandbox = ctx.sandbox
+    render_method = getattr(sandbox, "render_manim_source", None)
+    if callable(render_method):
+        return sandbox
+    return None
 
 
 def _build_timeline_diagnostics(

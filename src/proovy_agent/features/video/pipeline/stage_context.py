@@ -58,6 +58,7 @@ class StageContext:
     tts: Any | None = None
     db: Any | None = None
     workspace: Any | None = None
+    # Worker-only render sandbox. Inline/test callers leave this unset.
     sandbox: Any | None = None
     cancel_event: asyncio.Event | None = None
     progress_handler: StageProgressHandler | None = None

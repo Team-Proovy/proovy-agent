@@ -63,6 +63,19 @@ class Settings(BaseSettings):
     video_job_max_runtime_seconds: float = Field(default=1200.0, gt=0)
     video_worker_instance_id: str = Field(default="", validation_alias="VIDEO_WORKER_INSTANCE_ID")
     video_worker_auth_token: str = Field(default="", validation_alias="VIDEO_WORKER_AUTH_TOKEN")
+    video_render_workspace_root: str = Field(
+        default="/tmp/proovy-video-worker-render",
+        validation_alias="VIDEO_RENDER_WORKSPACE_ROOT",
+    )
+    video_render_timeout_seconds: float = Field(default=120.0, gt=0)
+    video_render_memory_limit_mb: int = Field(default=1024, gt=0)
+    video_render_file_size_limit_mb: int = Field(default=512, gt=0)
+    video_render_process_limit: int = Field(default=128, gt=0)
+    video_render_workspace_size_limit_mb: int = Field(default=512, gt=0)
+    video_render_manim_binary: str = Field(default="manim", validation_alias="VIDEO_RENDER_MANIM")
+    video_render_manim_quality_flag: str = "-ql"
+    video_render_require_non_root: bool = True
+    video_render_require_landlock: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

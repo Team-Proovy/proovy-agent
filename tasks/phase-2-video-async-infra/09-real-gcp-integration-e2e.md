@@ -33,6 +33,9 @@ sprint: ""
 - [ ] Cloud Tasks queue, dispatch deadline, retry config, rate limit, IAM(OIDC 또는 Phase B 임시 token) 확인
 - [ ] Cloud Run gen2 worker 서비스 URL, ingress/auth, concurrency=1, max instances, timeout 확인
 - [ ] Artifact Registry worker image, Secret Manager, runtime env 설정 확인
+- [ ] 2.05 sandbox runtime 확인: worker image non-root `USER`, Landlock write
+      allowlist 사용 가능 커널, `VIDEO_RENDER_WORKSPACE_ROOT` 쓰기 권한, 크기제한
+      in-memory volume mount, render subprocess secret/env scrub smoke 확인
 - [ ] GCS bucket, object key prefix, lifecycle, signed URL 또는 public access 정책 확인
 - [ ] DB `DATABASE_URL` / migration 적용 / `video_jobs` 상태 갱신 권한 확인
 - [ ] dev E2E 실행 환경에 manim / TeX / CJK 폰트 전제가 필요한지 분리 확인
@@ -42,6 +45,9 @@ sprint: ""
 - [ ] 2.01, 2.04, 2.05, 2.06, 2.07, 2.08 최종 보고에 `사용자 조치 필요` 항목이 있으면 이 태스크의 사전 준비 또는 구현 체크리스트에 누적한다.
 - [ ] 특히 GCP 배포, IAM, service account, Secret Manager, env var, Cloud Tasks 헤더/인증, GCS bucket 권한은 2.09에서 실제 리소스로 검증한다.
 - [ ] 2.04 완료 보고에서 확인된 항목: 배포 시 `VIDEO_WORKER_AUTH_TOKEN` 설정과 Cloud Tasks 호출 헤더 설정은 실제 GCP 연결 검증 대상이다.
+- [ ] 2.05 완료 보고에서 확인된 항목: render sandbox는 root runtime 또는 Landlock
+      미지원 런타임에서 실패하도록 fail-closed 처리한다. Cloud Run gen2 worker 이미지와
+      startup smoke에서 non-root, Landlock, 크기제한 workspace volume, secret/env 미전달을 검증한다.
 
 ## 구현 체크리스트
 
