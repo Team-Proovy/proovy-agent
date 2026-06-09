@@ -7,7 +7,8 @@ issue: "89"
 depends_on: ["2.05", "2.06"]
 blocks: ["2.09"]
 estimate: "M"
-status: "todo"
+status: "done"
+completed_at: 2026-06-09
 owner: ""
 sprint: ""
 ---
@@ -25,20 +26,20 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] 설계 §3.4.1 lazy detection / §3.4.2 permanent vs transient / §3.5.1 취소·환불 재확인
+- [x] 설계 §3.4.1 lazy detection / §3.4.2 permanent vs transient / §3.5.1 취소·환불 재확인
 
 ## 구현 체크리스트
 
-- [ ] 취소: queued = API terminal+refund / running = `cancel_requested=true` → 워커 감지 → sub-process 종료 + terminal+refund (**잡은 주체가 환불**)
-- [ ] permanent vs transient 실패 분류 (permanent = 환불 + ack 200 / transient = 환불 X + lease release + 503 retry)
-- [ ] 재접속 복구 (`api/v1/threads.py` `video_jobs[-1]` 상태 응답)
-- [ ] lazy detection (running heartbeat stale / queued `getTask` NOT_FOUND → 사용자 활동 endpoint에서 정리)
+- [x] 취소: queued = API terminal+refund / running = `cancel_requested=true` → 워커 감지 → sub-process 종료 + terminal+refund (**잡은 주체가 환불**)
+- [x] permanent vs transient 실패 분류 (permanent = 환불 + ack 200 / transient = 환불 X + lease release + 503 retry)
+- [x] 재접속 복구 (`api/v1/threads.py` `video_jobs[-1]` 상태 응답)
+- [x] lazy detection (running heartbeat stale / queued `getTask` NOT_FOUND → 사용자 활동 endpoint에서 정리)
 
 ## Definition of Done
 
-- [ ] 취소·실패 분류·재접속 시나리오 테스트 (무료 영상 race 차단)
-- [ ] refund idempotency 테스트
-- [ ] 자동화된 테스트 통과
+- [x] 취소·실패 분류·재접속 시나리오 테스트 (무료 영상 race 차단)
+- [x] refund idempotency 테스트
+- [x] 자동화된 테스트 통과
 
 ## 리스크 / 메모
 

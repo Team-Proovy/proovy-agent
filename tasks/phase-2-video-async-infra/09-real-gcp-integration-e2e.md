@@ -53,6 +53,10 @@ sprint: ""
       함께 설정해야 한다. 실제 Cloud Tasks task name(`video-{job_id}`), worker header
       전달, createTask 실패 후 getTask reconciliation, enqueue 실패 환불 경로를 실제
       GCP 리소스로 검증한다.
+- [ ] 2.07 완료 보고에서 확인된 항목: API runtime 서비스 계정에는 queued cancel의
+      `deleteTask`와 enqueue/lazy detection reconciliation의 `getTask` 권한이 필요하다.
+      running cancel, permanent failure, transient retry, queued/running stuck cleanup의
+      terminal+refund idempotency를 실제 GCP 리소스로 검증한다.
 
 ## 구현 체크리스트
 
@@ -63,6 +67,8 @@ sprint: ""
 - [ ] 샘플 문제 1건이 solve → video job create/capture → enqueue → worker render → GCS mp4 upload → 결과 표시까지 통과한다.
 - [ ] worker health check가 실제 이미지/서비스에서 manim, TeX, CJK 폰트, ffmpeg 존재를 검증한다.
 - [ ] 취소, transient retry, permanent failure, lazy detection 중 최소 smoke 경로를 실제 GCP에서 확인한다.
+- [ ] queued cancel의 Cloud Tasks `deleteTask` best-effort 경로와 lazy detection의
+      `getTask NOT_FOUND` 경로를 실제 IAM 권한으로 확인한다.
 - [ ] GCP 리소스·env·secret·배포 절차와 실패 시 진단 위치를 문서화한다.
 
 ## Definition of Done

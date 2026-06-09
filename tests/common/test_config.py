@@ -66,3 +66,16 @@ def test_settings_reads_video_hint_models(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.video_hint_target_model == "flash-custom"
     assert settings.video_hint_plan_model == "sonnet-custom"
     assert settings.video_hint_videohints_model == "flash-hints"
+
+
+def test_settings_reads_video_lazy_detection_thresholds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings exposes lazy detection thresholds for video jobs."""
+    monkeypatch.setenv("VIDEO_STUCK_JOB_THRESHOLD_SECONDS", "3600")
+    monkeypatch.setenv("VIDEO_QUEUED_TASK_CHECK_SECONDS", "1200")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.video_stuck_job_threshold_seconds == 3600
+    assert settings.video_queued_task_check_seconds == 1200

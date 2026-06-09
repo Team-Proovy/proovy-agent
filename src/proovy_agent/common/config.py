@@ -58,6 +58,8 @@ class Settings(BaseSettings):
         validation_alias="VIDEO_HINT_VIDEOHINTS_MODEL",
     )
     video_job_lease_stale_after_seconds: int = Field(default=480, gt=0)
+    video_stuck_job_threshold_seconds: int = Field(default=1800, gt=0)
+    video_queued_task_check_seconds: int = Field(default=900, gt=0)
     video_job_heartbeat_interval_seconds: float = Field(default=60.0, gt=0)
     video_cancel_poll_interval_seconds: float = Field(default=10.0, gt=0)
     video_job_max_runtime_seconds: float = Field(default=1200.0, gt=0)
