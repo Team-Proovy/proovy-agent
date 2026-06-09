@@ -4,7 +4,7 @@ phase: 3
 title: "Diagnostic 2-tier (internal/user + redaction + 상태 API)"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "96"
-depends_on: ["2.04"]
+depends_on: ["2.04", "2.09"]
 blocks: []
 estimate: "M"
 status: "todo"
@@ -21,6 +21,7 @@ sprint: ""
 ## 의존성
 
 - 2.04 (워커 서비스) — 워커가 stage별 internal/user diagnostic을 생성, 2.01의 user_diagnostic 매핑 확장 **[cross-phase]**
+- 2.09 (Real GCP integration E2E) — GCS/status API 결과 경로 검증 후 diagnostic 저장·조회 확장 **[cross-phase]**
 
 ## 사전 준비
 

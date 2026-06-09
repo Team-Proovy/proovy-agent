@@ -5,7 +5,7 @@ title: "취소 + 재접속 복구 + permanent/transient 환불 분류 + lazy det
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "89"
 depends_on: ["2.05", "2.06"]
-blocks: []
+blocks: ["2.09"]
 estimate: "M"
 status: "todo"
 owner: ""
@@ -44,3 +44,4 @@ sprint: ""
 
 - 미분류 예외는 보수적 permanent 처리 (transient 후 retry 성공 시 무료 영상 방지)
 - status 폴링(hot)은 단일행 체크, thread 조회(저빈도)는 광역 sweep — 쓰기 증폭 회피
+- 최종 보고에 Cloud Tasks retry/cancel 권한, lazy detection의 GCP 조회 권한, 환불 운영 절차 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.
