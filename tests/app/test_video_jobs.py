@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
@@ -22,6 +23,10 @@ class _FakeQueue:
 
     async def delete(self, cloud_tasks_name: str) -> None:
         return None
+
+    async def task_missing(self, cloud_tasks_name: str) -> bool:
+        _ = cloud_tasks_name
+        return False
 
 
 class _FakeArtifactUrlResolver:
@@ -233,3 +238,111 @@ def test_progress_lookup_is_user_scoped(
     response = client.get(f"/api/v1/video-jobs/{job.id}", params={"user_id": "user-2"})
 
     assert response.status_code == 404
+
+
+def test_cancel_queued_video_job_returns_terminal_status(
+    video_api: tuple[
+        TestClient,
+        _FakeQueue,
+        CloudRunVideoJobClient,
+        _FakeArtifactUrlResolver,
+    ],
+) -> None:
+    """queued job 취소는 즉시 canceled 상태로 복원된다."""
+    client, _queue, video_client, _artifact_url_resolver = video_api
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="1+1은?"),
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/video-jobs/{job.id}/cancel",
+        params={"user_id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job_id"] == job.id
+    assert payload["status"] == "canceled"
+    assert payload["can_user_retry"] is True
+
+
+def test_thread_state_restores_latest_video_job(
+    video_api: tuple[
+        TestClient,
+        _FakeQueue,
+        CloudRunVideoJobClient,
+        _FakeArtifactUrlResolver,
+    ],
+) -> None:
+    """재접속 시 thread 응답의 video_jobs[-1]로 최신 영상 상태를 복원한다."""
+    client, _queue, video_client, _artifact_url_resolver = video_api
+    first = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="1+1은?"),
+        )
+    )
+    latest = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="2+2는?"),
+        )
+    )
+    asyncio.run(video_client.finalize(first.id, status=VideoJobStatus.FAILED))
+
+    response = client.get("/api/v1/threads/thread-1", params={"user_id": "user-1"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["thread_id"] == "thread-1"
+    assert [job["job_id"] for job in payload["video_jobs"]] == [latest.id]
+    assert payload["video_jobs"][-1]["status"] == "queued"
+
+
+def test_cancel_running_stale_job_cleans_up_in_same_request(
+    video_api: tuple[
+        TestClient,
+        _FakeQueue,
+        CloudRunVideoJobClient,
+        _FakeArtifactUrlResolver,
+    ],
+) -> None:
+    """running stale job 취소는 다음 poll을 기다리지 않고 canceled로 정리된다."""
+    client, _queue, video_client, _artifact_url_resolver = video_api
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="1+1은?"),
+        )
+    )
+    repository = video_client._repository
+    asyncio.run(
+        repository.acquire_lease(
+            job.id,
+            instance_id="worker-1",
+            attempt_id="attempt-1",
+            lease_stale_after_seconds=60,
+        )
+    )
+    repository._jobs[job.id] = repository._jobs[job.id].model_copy(
+        update={
+            "progress_updated_at": datetime.now(UTC) - timedelta(minutes=31),
+        }
+    )
+
+    response = client.post(
+        f"/api/v1/video-jobs/{job.id}/cancel",
+        params={"user_id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "canceled"
+    assert payload["can_user_retry"] is True

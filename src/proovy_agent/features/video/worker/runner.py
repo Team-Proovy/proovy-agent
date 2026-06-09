@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 import json
 from pathlib import PurePosixPath
@@ -170,6 +171,7 @@ class VideoWorkerRunner:
         heartbeat_interval_seconds: float = 60.0,
         cancel_poll_interval_seconds: float = 10.0,
         job_max_runtime_seconds: float = 1200.0,
+        video_refund_amount: Decimal = Decimal("10"),
         pipeline_runner: PipelineRunner = run_pipeline_job,
         render_sandbox: object | None = None,
     ) -> None:
@@ -179,6 +181,7 @@ class VideoWorkerRunner:
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._cancel_poll_interval_seconds = cancel_poll_interval_seconds
         self._job_max_runtime_seconds = job_max_runtime_seconds
+        self._video_refund_amount = video_refund_amount
         self._pipeline_runner = pipeline_runner
         self._render_sandbox = render_sandbox
 
@@ -268,6 +271,17 @@ class VideoWorkerRunner:
                 attempt_id=active_attempt_id,
             )
 
+        if await progress_writer.sync_cancel_event():
+            canceled = await self._finalize_canceled(job_id)
+            if canceled is None or canceled.status is not VideoJobStatus.CANCELED:
+                return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
+            return VideoWorkerRunResult(
+                job_id=job_id,
+                status=VideoWorkerRunStatus.CANCELED,
+                job_status=canceled.status,
+                attempt_id=active_attempt_id,
+            )
+
         succeeded = await self._repository.finalize_for_lease(
             job_id,
             instance_id=self._instance_id,
@@ -279,6 +293,25 @@ class VideoWorkerRunner:
             ),
         )
         if succeeded is None or succeeded.status is not VideoJobStatus.SUCCEEDED:
+            refreshed = await self._repository.get(job_id)
+            if (
+                refreshed is not None
+                and refreshed.cancel_requested
+                and refreshed.status
+                not in {
+                    VideoJobStatus.SUCCEEDED,
+                    VideoJobStatus.FAILED,
+                    VideoJobStatus.CANCELED,
+                }
+            ):
+                canceled = await self._finalize_canceled(job_id)
+                if canceled is not None and canceled.status is VideoJobStatus.CANCELED:
+                    return VideoWorkerRunResult(
+                        job_id=job_id,
+                        status=VideoWorkerRunStatus.CANCELED,
+                        job_status=canceled.status,
+                        attempt_id=active_attempt_id,
+                    )
             return self._self_fenced_result(job_id, active_attempt_id=active_attempt_id)
         return VideoWorkerRunResult(
             job_id=job_id,
@@ -366,6 +399,7 @@ class VideoWorkerRunner:
             job_id,
             instance_id=self._instance_id,
             status=VideoJobStatus.CANCELED,
+            refund_amount=self._video_refund_amount,
         )
 
     async def _finalize_failed(
@@ -388,6 +422,7 @@ class VideoWorkerRunner:
             error_stage=error_stage,
             user_error_code=user_error_code,
             error_detail=_failure_error_detail(exc),
+            refund_amount=self._video_refund_amount,
         )
 
 

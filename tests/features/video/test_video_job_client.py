@@ -1,5 +1,6 @@
 """Video job client and repository tests."""
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
 from uuid import uuid4
@@ -13,6 +14,7 @@ from proovy_agent.features.video.jobs import (
     CloudTasksVideoTaskQueue,
     InMemoryVideoJobRepository,
     InvalidRetrySourceError,
+    PostgresVideoJobRepository,
     RetryAlreadyUsedError,
     VideoCreditCapture,
     VideoJobEnqueueError,
@@ -31,6 +33,7 @@ class _FakeQueue:
         self.events = events
         self.enqueued: list[VideoJob] = []
         self.deleted: list[str] = []
+        self.missing_tasks: set[str] = set()
 
     async def enqueue(self, job: VideoJob) -> None:
         if self.events is not None:
@@ -39,6 +42,9 @@ class _FakeQueue:
 
     async def delete(self, cloud_tasks_name: str) -> None:
         self.deleted.append(cloud_tasks_name)
+
+    async def task_missing(self, cloud_tasks_name: str) -> bool:
+        return cloud_tasks_name in self.missing_tasks
 
 
 class _FailingDeleteQueue(_FakeQueue):
@@ -105,6 +111,52 @@ class _RecordingRepository(InMemoryVideoJobRepository):
         if credit_capture is not None:
             self.events.append("capture")
         return job
+
+
+class _FakeCursor:
+    async def fetchone(self) -> None:
+        return None
+
+
+class _FakeTransaction:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.params: list[dict[str, object]] = []
+
+    async def __aenter__(self) -> "_RecordingConnection":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction()
+
+    async def execute(self, query: str, params: dict[str, object]) -> _FakeCursor:
+        self.queries.append(query)
+        self.params.append(params)
+        return _FakeCursor()
+
+
+class _RecordingPostgresRepository(PostgresVideoJobRepository):
+    def __init__(self, job: VideoJob) -> None:
+        super().__init__("postgresql://unused")
+        self.job = job
+        self.conn = _RecordingConnection()
+
+    async def get(self, job_id: str) -> VideoJob | None:
+        return self.job if job_id == self.job.id else None
+
+    async def _connect(self) -> _RecordingConnection:
+        return self.conn
 
 
 def _sample_input() -> VideoJobInput:
@@ -225,6 +277,22 @@ async def test_cloud_tasks_queue_treats_already_exists_and_not_found_as_idempote
 
     await queue.enqueue(job)
     await queue.delete(job.cloud_tasks_name)
+
+
+async def test_cloud_tasks_queue_reports_task_missing_only_on_not_found() -> None:
+    """lazy detection은 get_task NOT_FOUND만 큐 유실로 취급한다."""
+    cloud_tasks_client = _FakeCloudTasksClient()
+    queue = CloudTasksVideoTaskQueue(
+        queue_path="projects/p/locations/us-central1/queues/video",
+        worker_url="https://worker.example/jobs/run",
+        client=cloud_tasks_client,  # type: ignore[arg-type]
+    )
+
+    assert await queue.task_missing("video-job-1") is False
+
+    cloud_tasks_client.get_error = NotFound("missing")
+
+    assert await queue.task_missing("video-job-1") is True
 
 
 async def test_cloud_tasks_queue_reconciles_ambiguous_create_errors() -> None:
@@ -383,8 +451,8 @@ async def test_terminal_job_ignores_late_finalize_write() -> None:
     assert late_finalize.artifact_object_key is None
 
 
-async def test_cancel_returns_persisted_job_when_queue_delete_fails() -> None:
-    """Cloud Tasks delete 실패는 이미 저장된 cancel_requested 응답을 막지 않는다."""
+async def test_cancel_queued_job_marks_terminal_refunded_and_deletes_queue_task() -> None:
+    """queued 취소는 API가 terminal+refund를 잡고 task delete는 best-effort로 수행한다."""
     queue = _FailingDeleteQueue()
     client = CloudRunVideoJobClient(InMemoryVideoJobRepository(), queue)
     job = await client.create_and_enqueue(
@@ -396,8 +464,153 @@ async def test_cancel_returns_persisted_job_when_queue_delete_fails() -> None:
     canceled = await client.cancel(job.id)
 
     assert canceled.cancel_requested is True
-    assert canceled.status is VideoJobStatus.QUEUED
+    assert canceled.status is VideoJobStatus.CANCELED
+    assert canceled.refund_applied_at is not None
     assert queue.deleted == [job.cloud_tasks_name]
+
+
+async def test_cancel_running_job_only_sets_flag_without_refund_or_queue_delete() -> None:
+    """running 취소 요청은 워커가 terminal을 잡을 때까지 환불하지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    client = CloudRunVideoJobClient(repository, _FakeQueue())
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    await repository.acquire_lease(
+        job.id,
+        instance_id="worker-1",
+        attempt_id="attempt-1",
+        lease_stale_after_seconds=60,
+    )
+
+    canceled = await client.cancel(job.id)
+
+    assert canceled.status is VideoJobStatus.RUNNING
+    assert canceled.cancel_requested is True
+    assert canceled.refund_applied_at is None
+
+
+async def test_single_lazy_detection_marks_running_stuck_failed_and_refunded() -> None:
+    """hot progress lazy detection은 조회 중인 stale running job 1건만 정리한다."""
+    repository = InMemoryVideoJobRepository()
+    client = CloudRunVideoJobClient(repository, _FakeQueue())
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    await repository.acquire_lease(
+        job.id,
+        instance_id="worker-1",
+        attempt_id="attempt-1",
+        lease_stale_after_seconds=60,
+    )
+    repository._jobs[job.id] = repository._jobs[job.id].model_copy(
+        update={
+            "progress_updated_at": datetime.now(UTC) - timedelta(minutes=31),
+            "stage": StageName.RENDER,
+        }
+    )
+
+    cleaned = await client.check_stuck_job(
+        job.id,
+        user_id="user-1",
+        running_stale_after_seconds=1800,
+        queued_stale_after_seconds=900,
+    )
+
+    assert cleaned is not None
+    assert cleaned.status is VideoJobStatus.FAILED
+    assert cleaned.error_stage is StageName.RENDER
+    assert cleaned.user_error_code is UserErrorCode.INFRASTRUCTURE_TIMEOUT
+    assert cleaned.refund_applied_at is not None
+
+
+async def test_lazy_detection_marks_old_queued_job_failed_only_when_task_missing() -> None:
+    """queued stuck은 Cloud Tasks task absence가 확인된 경우에만 failed+refund 된다."""
+    repository = InMemoryVideoJobRepository()
+    queue = _FakeQueue()
+    client = CloudRunVideoJobClient(repository, queue)
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    repository._jobs[job.id] = repository._jobs[job.id].model_copy(
+        update={"created_at": datetime.now(UTC) - timedelta(minutes=16)}
+    )
+
+    still_queued = await client.check_stuck_job(
+        job.id,
+        user_id="user-1",
+        running_stale_after_seconds=1800,
+        queued_stale_after_seconds=900,
+    )
+    queue.missing_tasks.add(job.cloud_tasks_name)
+    failed = await client.check_stuck_job(
+        job.id,
+        user_id="user-1",
+        running_stale_after_seconds=1800,
+        queued_stale_after_seconds=900,
+    )
+
+    assert still_queued is not None
+    assert still_queued.status is VideoJobStatus.QUEUED
+    assert failed is not None
+    assert failed.status is VideoJobStatus.FAILED
+    assert failed.error_stage is StageName.ENQUEUE
+    assert failed.refund_applied_at is not None
+
+
+async def test_latest_thread_job_returns_reconnect_restore_target() -> None:
+    """재접속 복구는 해당 thread의 최신 video_jobs[-1] 상태를 조회한다."""
+    client, _queue = _build_client()
+    first = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+    latest = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=VideoJobInput(problem_text="다른 문제"),
+    )
+    await client.finalize(first.id, status=VideoJobStatus.FAILED)
+
+    restored = await client.get_latest_for_thread(user_id="user-1", thread_id="thread-1")
+
+    assert restored == latest
+
+
+async def test_postgres_success_finalize_sql_rejects_cancel_requested_jobs() -> None:
+    """Postgres worker success terminal write is guarded against late cancel."""
+    job = _job_for_postgres_sql_test()
+    repository = _RecordingPostgresRepository(job)
+
+    result = await repository.finalize_for_lease(
+        job.id,
+        instance_id="worker-1",
+        status=VideoJobStatus.SUCCEEDED,
+        artifact_object_key="video-jobs/job-1/final.mp4",
+    )
+
+    assert result is None
+    assert "cancel_requested = FALSE" in repository.conn.queries[0]
+    assert repository.conn.params[0]["status"] == VideoJobStatus.SUCCEEDED.value
+
+
+async def test_postgres_heartbeat_sql_has_no_terminal_status_parameter() -> None:
+    """Heartbeat must not carry success-finalize SQL guards or undefined params."""
+    job = _job_for_postgres_sql_test()
+    repository = _RecordingPostgresRepository(job)
+
+    result = await repository.heartbeat_lease(job.id, instance_id="worker-1")
+
+    assert result is None
+    assert "cancel_requested = FALSE" not in repository.conn.queries[0]
+    assert "status" not in repository.conn.params[0]
 
 
 async def test_in_memory_repository_returns_defensive_copies() -> None:
@@ -432,3 +645,19 @@ async def test_in_memory_repository_validates_progress_updates() -> None:
 
     with pytest.raises(ValidationError, match="progress values must be non-negative"):
         await repository.update_progress(job.id, progress={"segments_done": -1})
+
+
+def _job_for_postgres_sql_test() -> VideoJob:
+    now = datetime.now(UTC)
+    return VideoJob(
+        id="job-1",
+        user_id="user-1",
+        thread_id="thread-1",
+        problem_hash="hash",
+        input_snapshot=_sample_input(),
+        cloud_tasks_name="video-job-1",
+        status=VideoJobStatus.RUNNING,
+        lease_holder_instance_id="worker-1",
+        progress_updated_at=now,
+        created_at=now,
+    )

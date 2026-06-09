@@ -107,6 +107,18 @@ class VideoJobRepository(Protocol):
     async def get(self, job_id: str) -> VideoJob | None:
         """Return a single job by id."""
 
+    async def get_latest_for_thread(self, *, user_id: str, thread_id: str) -> VideoJob | None:
+        """Return the newest video job for a user's thread."""
+
+    async def list_lazy_detection_candidates(
+        self,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> list[VideoJob]:
+        """Return user-owned jobs that may need lazy stuck cleanup."""
+
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         """Whether a user retry child already exists for the source job."""
 
@@ -157,6 +169,7 @@ class VideoJobRepository(Protocol):
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob:
         """Mark a job as terminal."""
 
@@ -180,11 +193,37 @@ class VideoJobRepository(Protocol):
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob | None:
         """Mark a leased job as terminal only when the caller still owns it."""
 
-    async def request_cancel(self, job_id: str) -> VideoJob:
+    async def request_cancel(
+        self,
+        job_id: str,
+        *,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
         """Request cancellation; queued jobs may become terminal later."""
+
+    async def mark_running_stuck(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        """Mark one stale running job terminal and refund when the update wins."""
+
+    async def mark_queued_missing(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        """Mark one stale queued job failed after the queue confirms task absence."""
 
 
 class InMemoryVideoJobRepository:
@@ -241,6 +280,46 @@ class InMemoryVideoJobRepository:
         async with self._lock:
             job = self._jobs.get(job_id)
             return _copy_job(job) if job is not None else None
+
+    async def get_latest_for_thread(self, *, user_id: str, thread_id: str) -> VideoJob | None:
+        async with self._lock:
+            jobs = [
+                job
+                for job in self._jobs.values()
+                if job.user_id == user_id and job.thread_id == thread_id
+            ]
+            if not jobs:
+                return None
+            latest = max(jobs, key=lambda job: (job.created_at, job.id))
+            return _copy_job(latest)
+
+    async def list_lazy_detection_candidates(
+        self,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> list[VideoJob]:
+        async with self._lock:
+            current_time = now_utc()
+            running_stale_before = current_time - timedelta(seconds=running_stale_after_seconds)
+            queued_stale_before = current_time - timedelta(seconds=queued_stale_after_seconds)
+            candidates = [
+                job
+                for job in self._jobs.values()
+                if job.user_id == user_id
+                and (
+                    (
+                        job.status is VideoJobStatus.RUNNING
+                        and job.progress_updated_at is not None
+                        and job.progress_updated_at < running_stale_before
+                    )
+                    or (
+                        job.status is VideoJobStatus.QUEUED and job.created_at < queued_stale_before
+                    )
+                )
+            ]
+            return [_copy_job(job) for job in candidates]
 
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         async with self._lock:
@@ -379,6 +458,7 @@ class InMemoryVideoJobRepository:
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob:
         if status not in TERMINAL_JOB_STATUSES:
             raise VideoJobStoreError("finalize requires a terminal job status")
@@ -388,19 +468,22 @@ class InMemoryVideoJobRepository:
             if job.status in TERMINAL_JOB_STATUSES:
                 return _copy_job(job)
 
-            updated = _validated_job_update(
-                job,
-                {
-                    "status": status,
-                    "artifact_object_key": artifact_object_key,
-                    "error_stage": error_stage,
-                    "user_error_code": user_error_code,
-                    "error_detail": error_detail,
-                    "cost": dict(cost or job.cost),
-                    "progress_updated_at": now_utc(),
-                    "finished_at": now_utc(),
-                },
-            )
+            update: dict[str, object] = {
+                "status": status,
+                "artifact_object_key": artifact_object_key,
+                "error_stage": error_stage,
+                "user_error_code": user_error_code,
+                "error_detail": error_detail,
+                "cost": dict(cost or job.cost),
+                "progress_updated_at": now_utc(),
+                "finished_at": now_utc(),
+            }
+            if refund_amount is not None and status in {
+                VideoJobStatus.FAILED,
+                VideoJobStatus.CANCELED,
+            }:
+                update["refund_applied_at"] = job.refund_applied_at or now_utc()
+            updated = _validated_job_update(job, update)
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
@@ -443,6 +526,7 @@ class InMemoryVideoJobRepository:
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob | None:
         if status not in TERMINAL_JOB_STATUSES:
             raise VideoJobStoreError("finalize requires a terminal job status")
@@ -453,30 +537,120 @@ class InMemoryVideoJobRepository:
                 return _copy_job(job)
             if job.lease_holder_instance_id != instance_id:
                 return None
+            if status is VideoJobStatus.SUCCEEDED and job.cancel_requested:
+                return None
 
-            updated = _validated_job_update(
-                job,
-                {
-                    "status": status,
-                    "lease_holder_instance_id": None,
-                    "artifact_object_key": artifact_object_key,
-                    "error_stage": error_stage,
-                    "user_error_code": user_error_code,
-                    "error_detail": error_detail,
-                    "cost": dict(cost or job.cost),
-                    "progress_updated_at": now_utc(),
-                    "finished_at": now_utc(),
-                },
-            )
+            update: dict[str, object] = {
+                "status": status,
+                "lease_holder_instance_id": None,
+                "artifact_object_key": artifact_object_key,
+                "error_stage": error_stage,
+                "user_error_code": user_error_code,
+                "error_detail": error_detail,
+                "cost": dict(cost or job.cost),
+                "progress_updated_at": now_utc(),
+                "finished_at": now_utc(),
+            }
+            if refund_amount is not None and status in {
+                VideoJobStatus.FAILED,
+                VideoJobStatus.CANCELED,
+            }:
+                update["refund_applied_at"] = job.refund_applied_at or now_utc()
+            updated = _validated_job_update(job, update)
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
-    async def request_cancel(self, job_id: str) -> VideoJob:
+    async def request_cancel(
+        self,
+        job_id: str,
+        *,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
         async with self._lock:
             job = self._require_job_locked(job_id)
             if job.status in TERMINAL_JOB_STATUSES:
                 return _copy_job(job)
-            updated = _validated_job_update(job, {"cancel_requested": True})
+            if job.status is VideoJobStatus.QUEUED and job.lease_holder_instance_id is None:
+                update: dict[str, object] = {
+                    "status": VideoJobStatus.CANCELED,
+                    "cancel_requested": True,
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                }
+                if refund_amount is not None:
+                    update["refund_applied_at"] = job.refund_applied_at or now_utc()
+                updated = _validated_job_update(job, update)
+            else:
+                updated = _validated_job_update(job, {"cancel_requested": True})
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
+    async def mark_running_stuck(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            stale_before = now_utc() - timedelta(seconds=stale_after_seconds)
+            if (
+                job.user_id != user_id
+                or job.status is not VideoJobStatus.RUNNING
+                or job.progress_updated_at is None
+                or job.progress_updated_at >= stale_before
+            ):
+                return _copy_job(job)
+
+            status = VideoJobStatus.CANCELED if job.cancel_requested else VideoJobStatus.FAILED
+            update: dict[str, object] = {
+                "status": status,
+                "lease_holder_instance_id": None,
+                "error_stage": job.stage,
+                "user_error_code": None
+                if status is VideoJobStatus.CANCELED
+                else UserErrorCode.INFRASTRUCTURE_TIMEOUT,
+                "progress_updated_at": now_utc(),
+                "finished_at": now_utc(),
+            }
+            if refund_amount is not None:
+                update["refund_applied_at"] = job.refund_applied_at or now_utc()
+            updated = _validated_job_update(job, update)
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
+    async def mark_queued_missing(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            stale_before = now_utc() - timedelta(seconds=stale_after_seconds)
+            if (
+                job.user_id != user_id
+                or job.status is not VideoJobStatus.QUEUED
+                or job.created_at >= stale_before
+                or job.lease_holder_instance_id is not None
+            ):
+                return _copy_job(job)
+
+            update: dict[str, object] = {
+                "status": VideoJobStatus.FAILED,
+                "lease_holder_instance_id": None,
+                "error_stage": StageName.ENQUEUE,
+                "user_error_code": UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED,
+                "progress_updated_at": now_utc(),
+                "finished_at": now_utc(),
+            }
+            if refund_amount is not None:
+                update["refund_applied_at"] = job.refund_applied_at or now_utc()
+            updated = _validated_job_update(job, update)
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
@@ -601,6 +775,59 @@ class PostgresVideoJobRepository:
             cur = await conn.execute("SELECT * FROM video_jobs WHERE id = %s", (job_id,))
             row = await cur.fetchone()
             return _row_to_job(row) if row is not None else None
+
+    async def get_latest_for_thread(self, *, user_id: str, thread_id: str) -> VideoJob | None:
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                SELECT *
+                  FROM video_jobs
+                 WHERE user_id = %s
+                   AND thread_id = %s
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT 1
+                """,
+                (user_id, thread_id),
+            )
+            row = await cur.fetchone()
+            return _row_to_job(row) if row is not None else None
+
+    async def list_lazy_detection_candidates(
+        self,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> list[VideoJob]:
+        running_stale_before = now_utc() - timedelta(seconds=running_stale_after_seconds)
+        queued_stale_before = now_utc() - timedelta(seconds=queued_stale_after_seconds)
+        async with await self._connect() as conn:
+            cur = await conn.execute(
+                """
+                SELECT *
+                  FROM video_jobs
+                 WHERE user_id = %(user_id)s
+                   AND (
+                     (
+                       status = 'running'
+                       AND progress_updated_at IS NOT NULL
+                       AND progress_updated_at < %(running_stale_before)s
+                     )
+                     OR (
+                       status = 'queued'
+                       AND created_at < %(queued_stale_before)s
+                     )
+                   )
+                 ORDER BY created_at ASC
+                """,
+                {
+                    "user_id": user_id,
+                    "running_stale_before": running_stale_before,
+                    "queued_stale_before": queued_stale_before,
+                },
+            )
+            rows = await cur.fetchall()
+            return [_row_to_job(row) for row in rows]
 
     async def has_retry_for_source(self, source_job_id: str) -> bool:
         async with await self._connect() as conn:
@@ -828,6 +1055,7 @@ class PostgresVideoJobRepository:
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob:
         if status not in TERMINAL_JOB_STATUSES:
             raise VideoJobStoreError("finalize requires a terminal job status")
@@ -838,7 +1066,7 @@ class PostgresVideoJobRepository:
         if existing.status in TERMINAL_JOB_STATUSES:
             return existing
 
-        async with await self._connect() as conn:
+        async with await self._connect() as conn, conn.transaction():
             cur = await conn.execute(
                 """
                 UPDATE video_jobs
@@ -874,6 +1102,15 @@ class PostgresVideoJobRepository:
                 if refreshed is not None and refreshed.status in TERMINAL_JOB_STATUSES:
                     return refreshed
                 raise VideoJobNotFoundError(job_id)
+            if refund_amount is not None and status in {
+                VideoJobStatus.FAILED,
+                VideoJobStatus.CANCELED,
+            }:
+                await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                refreshed = await self._select_for_update(conn, job_id)
+                if refreshed is None:
+                    raise VideoJobNotFoundError(job_id)
+                return refreshed
             return _row_to_job(row)
 
     async def mark_enqueue_failed(
@@ -937,6 +1174,7 @@ class PostgresVideoJobRepository:
         user_error_code: UserErrorCode | None = None,
         error_detail: str | None = None,
         cost: Mapping[str, float] | None = None,
+        refund_amount: CreditAmount | None = None,
     ) -> VideoJob | None:
         if status not in TERMINAL_JOB_STATUSES:
             raise VideoJobStoreError("finalize requires a terminal job status")
@@ -947,7 +1185,7 @@ class PostgresVideoJobRepository:
         if existing.status in TERMINAL_JOB_STATUSES:
             return existing
 
-        async with await self._connect() as conn:
+        async with await self._connect() as conn, conn.transaction():
             cur = await conn.execute(
                 """
                 UPDATE video_jobs
@@ -963,6 +1201,7 @@ class PostgresVideoJobRepository:
                 WHERE id = %(id)s
                   AND lease_holder_instance_id = %(instance_id)s
                   AND status NOT IN ('succeeded', 'failed', 'canceled')
+                  AND (%(status)s <> 'succeeded' OR cancel_requested = FALSE)
                 RETURNING *
                 """,
                 {
@@ -982,6 +1221,15 @@ class PostgresVideoJobRepository:
             )
             row = await cur.fetchone()
             if row is not None:
+                if refund_amount is not None and status in {
+                    VideoJobStatus.FAILED,
+                    VideoJobStatus.CANCELED,
+                }:
+                    await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                    refreshed = await self._select_for_update(conn, job_id)
+                    if refreshed is None:
+                        raise VideoJobNotFoundError(job_id)
+                    return refreshed
                 return _row_to_job(row)
 
         refreshed = await self.get(job_id)
@@ -991,20 +1239,53 @@ class PostgresVideoJobRepository:
             return refreshed
         return None
 
-    async def request_cancel(self, job_id: str) -> VideoJob:
+    async def request_cancel(
+        self,
+        job_id: str,
+        *,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
         existing = await self.get(job_id)
         if existing is None:
             raise VideoJobNotFoundError(job_id)
         if existing.status in TERMINAL_JOB_STATUSES:
             return existing
 
-        async with await self._connect() as conn:
+        async with await self._connect() as conn, conn.transaction():
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET status = 'canceled',
+                    cancel_requested = TRUE,
+                    progress_updated_at = %(progress_updated_at)s,
+                    finished_at = %(finished_at)s
+                WHERE id = %(id)s
+                  AND status = 'queued'
+                  AND lease_holder_instance_id IS NULL
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is not None:
+                if refund_amount is not None:
+                    await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                    refreshed = await self._select_for_update(conn, job_id)
+                    if refreshed is None:
+                        raise VideoJobNotFoundError(job_id)
+                    return refreshed
+                return _row_to_job(row)
+
             cur = await conn.execute(
                 """
                 UPDATE video_jobs
                 SET cancel_requested = TRUE
                 WHERE id = %(id)s
-                  AND status NOT IN ('succeeded', 'failed', 'canceled')
+                  AND status = 'running'
                 RETURNING *
                 """,
                 {"id": job_id},
@@ -1015,6 +1296,114 @@ class PostgresVideoJobRepository:
                 if refreshed is not None and refreshed.status in TERMINAL_JOB_STATUSES:
                     return refreshed
                 raise VideoJobNotFoundError(job_id)
+            return _row_to_job(row)
+
+    async def mark_running_stuck(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        stale_before = now_utc() - timedelta(seconds=stale_after_seconds)
+        async with await self._connect() as conn, conn.transaction():
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET status = CASE WHEN cancel_requested THEN 'canceled' ELSE 'failed' END,
+                    lease_holder_instance_id = NULL,
+                    user_error_code = CASE
+                        WHEN cancel_requested THEN NULL
+                        ELSE %(timeout_code)s
+                    END,
+                    error_stage = stage,
+                    progress_updated_at = %(progress_updated_at)s,
+                    finished_at = %(finished_at)s
+                WHERE id = %(id)s
+                  AND user_id = %(user_id)s
+                  AND status = 'running'
+                  AND progress_updated_at IS NOT NULL
+                  AND progress_updated_at < %(stale_before)s
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "user_id": user_id,
+                    "timeout_code": UserErrorCode.INFRASTRUCTURE_TIMEOUT.value,
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                    "stale_before": stale_before,
+                },
+            )
+            row = await cur.fetchone()
+            if row is None:
+                refreshed_cur = await conn.execute(
+                    "SELECT * FROM video_jobs WHERE id = %s", (job_id,)
+                )
+                refreshed_row = await refreshed_cur.fetchone()
+                if refreshed_row is None:
+                    raise VideoJobNotFoundError(job_id)
+                return _row_to_job(refreshed_row)
+            if refund_amount is not None:
+                await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                refreshed = await self._select_for_update(conn, job_id)
+                if refreshed is None:
+                    raise VideoJobNotFoundError(job_id)
+                return refreshed
+            return _row_to_job(row)
+
+    async def mark_queued_missing(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        stale_after_seconds: int,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        stale_before = now_utc() - timedelta(seconds=stale_after_seconds)
+        async with await self._connect() as conn, conn.transaction():
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET status = 'failed',
+                    lease_holder_instance_id = NULL,
+                    error_stage = %(error_stage)s,
+                    user_error_code = %(user_error_code)s,
+                    progress_updated_at = %(progress_updated_at)s,
+                    finished_at = %(finished_at)s
+                WHERE id = %(id)s
+                  AND user_id = %(user_id)s
+                  AND status = 'queued'
+                  AND lease_holder_instance_id IS NULL
+                  AND created_at < %(stale_before)s
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "user_id": user_id,
+                    "error_stage": StageName.ENQUEUE.value,
+                    "user_error_code": UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED.value,
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                    "stale_before": stale_before,
+                },
+            )
+            row = await cur.fetchone()
+            if row is None:
+                refreshed_cur = await conn.execute(
+                    "SELECT * FROM video_jobs WHERE id = %s", (job_id,)
+                )
+                refreshed_row = await refreshed_cur.fetchone()
+                if refreshed_row is None:
+                    raise VideoJobNotFoundError(job_id)
+                return _row_to_job(refreshed_row)
+            if refund_amount is not None:
+                await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                refreshed = await self._select_for_update(conn, job_id)
+                if refreshed is None:
+                    raise VideoJobNotFoundError(job_id)
+                return refreshed
             return _row_to_job(row)
 
     async def _connect(self) -> AsyncConnection[dict[str, Any]]:

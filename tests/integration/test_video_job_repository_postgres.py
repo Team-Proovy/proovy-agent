@@ -307,3 +307,75 @@ async def test_postgres_request_cancel_ignores_terminal_job(
     assert canceled == failed
     assert canceled.status is VideoJobStatus.FAILED
     assert canceled.cancel_requested is False
+
+
+async def test_postgres_queued_cancel_refunds_captured_credit_once(
+    database_url: str,
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """queued 취소는 terminal+refund를 한 번만 적용한다."""
+    user_id = f"user-{uuid.uuid4()}"
+    hold = await _create_credit_hold(database_url, user_id=user_id)
+    job = await repository.create(
+        user_id=user_id,
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        credit_capture=VideoCreditCapture(hold_id=hold.id, amount=Decimal("10")),
+    )
+
+    first = await repository.request_cancel(job.id, refund_amount=Decimal("10"))
+    second = await repository.request_cancel(job.id, refund_amount=Decimal("10"))
+
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        balance = await CreditLedger(conn).get_balance(user_id)
+
+    assert first.status is VideoJobStatus.CANCELED
+    assert first.refund_applied_at is not None
+    assert second.status is VideoJobStatus.CANCELED
+    assert second.refund_applied_at == first.refund_applied_at
+    assert balance.balance == Decimal("100")
+    assert balance.active_hold_amount == Decimal("10")
+
+
+async def test_postgres_running_cancel_refunds_only_when_worker_finalizes(
+    database_url: str,
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """running 취소 요청은 플래그만 세우고 워커 terminal 확정에서 환불한다."""
+    user_id = f"user-{uuid.uuid4()}"
+    hold = await _create_credit_hold(database_url, user_id=user_id)
+    job = await repository.create(
+        user_id=user_id,
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        credit_capture=VideoCreditCapture(hold_id=hold.id, amount=Decimal("10")),
+    )
+    leased = await repository.acquire_lease(
+        job.id,
+        instance_id="worker-1",
+        attempt_id="attempt-1",
+        lease_stale_after_seconds=60,
+    )
+    assert leased is not None
+
+    requested = await repository.request_cancel(job.id, refund_amount=Decimal("10"))
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        balance_before_terminal = await CreditLedger(conn).get_balance(user_id)
+
+    finalized = await repository.finalize_for_lease(
+        job.id,
+        instance_id="worker-1",
+        status=VideoJobStatus.CANCELED,
+        refund_amount=Decimal("10"),
+    )
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        balance_after_terminal = await CreditLedger(conn).get_balance(user_id)
+
+    assert requested.status is VideoJobStatus.RUNNING
+    assert requested.cancel_requested is True
+    assert requested.refund_applied_at is None
+    assert balance_before_terminal.balance == Decimal("90")
+    assert finalized is not None
+    assert finalized.status is VideoJobStatus.CANCELED
+    assert finalized.refund_applied_at is not None
+    assert balance_after_terminal.balance == Decimal("100")

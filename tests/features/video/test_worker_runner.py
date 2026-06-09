@@ -7,7 +7,9 @@ from datetime import UTC, datetime, timedelta
 import json
 from typing import TYPE_CHECKING
 
-from proovy_agent.features.video.exceptions import InvalidStageOutputError
+import pytest
+
+from proovy_agent.features.video.exceptions import InvalidStageOutputError, TransientFailure
 from proovy_agent.features.video.jobs import InMemoryVideoJobRepository
 from proovy_agent.features.video.models import (
     FinalVideoArtifact,
@@ -25,7 +27,11 @@ from proovy_agent.features.video.models import (
     VideoPipelineResult,
     VideoScript,
 )
-from proovy_agent.features.video.worker import VideoWorkerRunner, VideoWorkerRunStatus
+from proovy_agent.features.video.worker import (
+    VideoWorkerRetryableError,
+    VideoWorkerRunner,
+    VideoWorkerRunStatus,
+)
 from proovy_agent.features.video.worker.sandbox import RenderSandboxResourceLimitError
 
 if TYPE_CHECKING:
@@ -66,6 +72,13 @@ class _HeartbeatFailsRepository(InMemoryVideoJobRepository):
     async def heartbeat_lease(self, job_id: str, *, instance_id: str) -> VideoJob | None:
         self.heartbeat_calls += 1
         return None
+
+
+class _CancelBeforeSuccessFinalizeRepository(InMemoryVideoJobRepository):
+    async def finalize_for_lease(self, job_id: str, **kwargs):
+        if kwargs.get("status") is VideoJobStatus.SUCCEEDED:
+            await self.request_cancel(job_id)
+        return await super().finalize_for_lease(job_id, **kwargs)
 
 
 def _sample_plan() -> SolutionPlan:
@@ -226,6 +239,65 @@ async def test_worker_runner_marks_render_sandbox_resource_limit_as_failed_job()
     assert loaded.status is VideoJobStatus.FAILED
     assert loaded.error_stage is StageName.RENDER
     assert loaded.user_error_code is UserErrorCode.RENDER_RESOURCE_LIMIT
+    assert loaded.refund_applied_at is not None
+
+
+async def test_worker_runner_transient_failure_releases_lease_without_refund_then_retry_succeeds() -> (
+    None
+):
+    """transient 실패는 환불하지 않아 retry 성공 뒤 무료 영상 race를 만들지 않는다."""
+    repository = InMemoryVideoJobRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def transient_pipeline(
+        job: VideoPipelineJob,
+        *,
+        ctx: StageContext,
+    ) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.TTS, "started")
+        raise TransientFailure(
+            "tts provider timeout",
+            stage=StageName.TTS,
+            user_error_code=UserErrorCode.TTS_PROVIDER_DOWN,
+        )
+
+    retrying_runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=transient_pipeline,
+    )
+
+    with pytest.raises(VideoWorkerRetryableError):
+        await retrying_runner.run(job.id)
+
+    after_transient = await repository.get(job.id)
+    assert after_transient is not None
+    assert after_transient.status is VideoJobStatus.RUNNING
+    assert after_transient.lease_holder_instance_id is None
+    assert after_transient.refund_applied_at is None
+
+    success_runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-2",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+    )
+
+    result = await success_runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.COMPLETED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.SUCCEEDED
+    assert loaded.refund_applied_at is None
 
 
 async def test_worker_runner_persists_latex_validation_diagnostics_on_failure() -> None:
@@ -576,6 +648,39 @@ async def test_runner_success_finalize_is_guarded_without_post_pipeline_heartbea
     assert repository.heartbeat_calls == 0
 
 
+async def test_runner_honors_cancel_between_pipeline_result_and_success_finalize() -> None:
+    """pipeline 결과 이후 cancel flag가 들어와도 succeeded로 덮지 않는다."""
+    repository = _CancelBeforeSuccessFinalizeRepository()
+    job = await repository.create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+    )
+
+    async def quick_pipeline(job: VideoPipelineJob, *, ctx: StageContext) -> VideoPipelineResult:
+        await ctx.emit_stage_event(StageName.COMPOSE, "started")
+        await ctx.emit_stage_event(StageName.COMPOSE, "completed")
+        return _empty_result(job)
+
+    runner = VideoWorkerRunner(
+        repository,
+        instance_id="worker-1",
+        heartbeat_interval_seconds=1,
+        cancel_poll_interval_seconds=1,
+        job_max_runtime_seconds=5,
+        pipeline_runner=quick_pipeline,
+    )
+
+    result = await runner.run(job.id)
+    loaded = await repository.get(job.id)
+
+    assert result.status is VideoWorkerRunStatus.CANCELED
+    assert loaded is not None
+    assert loaded.status is VideoJobStatus.CANCELED
+    assert loaded.artifact_object_key is None
+    assert loaded.refund_applied_at is not None
+
+
 async def test_cancel_poll_marks_running_job_canceled() -> None:
     """10초 cancel poll 경로가 cancel_requested를 감지하면 canceled terminal로 남긴다."""
     repository = InMemoryVideoJobRepository()
@@ -612,6 +717,7 @@ async def test_cancel_poll_marks_running_job_canceled() -> None:
     assert loaded.status is VideoJobStatus.CANCELED
     assert loaded.cancel_requested is True
     assert loaded.lease_holder_instance_id is None
+    assert loaded.refund_applied_at is not None
 
 
 async def test_stage_boundary_cancel_is_checked_before_next_stage() -> None:

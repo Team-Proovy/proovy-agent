@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 import json
 import logging
 from typing import TYPE_CHECKING, Protocol
@@ -15,7 +17,6 @@ from proovy_agent.features.video.models import StageName, UserErrorCode, VideoJo
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from decimal import Decimal
     from uuid import UUID
 
     from proovy_agent.features.video.jobs.repository import VideoJobRepository
@@ -60,6 +61,9 @@ class VideoTaskQueue(Protocol):
     async def delete(self, cloud_tasks_name: str) -> None:
         """Best-effort delete for not-yet-dispatched tasks."""
 
+    async def task_missing(self, cloud_tasks_name: str) -> bool:
+        """Return true only when the backend confirms the task does not exist."""
+
 
 class NoopVideoTaskQueue:
     """Development queue adapter that records no external task."""
@@ -69,6 +73,10 @@ class NoopVideoTaskQueue:
 
     async def delete(self, cloud_tasks_name: str) -> None:
         return None
+
+    async def task_missing(self, cloud_tasks_name: str) -> bool:
+        _ = cloud_tasks_name
+        return False
 
 
 class CloudTasksVideoTaskQueue:
@@ -98,6 +106,9 @@ class CloudTasksVideoTaskQueue:
 
     async def delete(self, cloud_tasks_name: str) -> None:
         await asyncio.to_thread(self._delete_task, cloud_tasks_name)
+
+    async def task_missing(self, cloud_tasks_name: str) -> bool:
+        return await asyncio.to_thread(self._task_missing, cloud_tasks_name)
 
     def _create_task(self, job: VideoJob) -> None:
         task_name = self._task_path(job.cloud_tasks_name)
@@ -149,6 +160,19 @@ class CloudTasksVideoTaskQueue:
             )
         return False
 
+    def _task_missing(self, cloud_tasks_name: str) -> bool:
+        try:
+            self._tasks_client().get_task(name=self._task_path(cloud_tasks_name))
+        except NotFound:
+            return True
+        except Exception:
+            logger.warning(
+                "Cloud Tasks get_task 확인이 모호해 lazy cleanup을 보류합니다: %s",
+                cloud_tasks_name,
+                exc_info=True,
+            )
+        return False
+
     def _tasks_client(self) -> tasks_v2.CloudTasksClient:
         if self._client is None:
             self._client = tasks_v2.CloudTasksClient()
@@ -175,6 +199,9 @@ class VideoJobClient(Protocol):
 
     async def get_progress(self, job_id: str, *, user_id: str | None = None) -> VideoJob | None:
         """Return one job for a hot progress endpoint."""
+
+    async def get_latest_for_thread(self, *, user_id: str, thread_id: str) -> VideoJob | None:
+        """Return the newest video job for reconnect restoration."""
 
     async def can_user_retry(self, job: VideoJob) -> bool:
         """Whether the job can be used as a source for one user retry."""
@@ -205,6 +232,25 @@ class VideoJobClient(Protocol):
     async def cancel(self, job_id: str) -> VideoJob:
         """Request cancellation of a job."""
 
+    async def check_stuck_job(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> VideoJob | None:
+        """Run lazy detection for one hot-polled job."""
+
+    async def sweep_stuck_jobs(
+        self,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> int:
+        """Run user-scoped lazy detection for low-frequency reconnect paths."""
+
 
 class CloudRunVideoJobClient:
     """Video job client for a Cloud Run worker launched through a queue."""
@@ -213,9 +259,11 @@ class CloudRunVideoJobClient:
         self,
         repository: VideoJobRepository,
         queue: VideoTaskQueue | None = None,
+        video_refund_amount: Decimal = Decimal("10"),
     ) -> None:
         self._repository = repository
         self._queue = queue or NoopVideoTaskQueue()
+        self._video_refund_amount = video_refund_amount
 
     async def create_and_enqueue(
         self,
@@ -251,6 +299,9 @@ class CloudRunVideoJobClient:
         if user_id is not None and job.user_id != user_id:
             return None
         return job
+
+    async def get_latest_for_thread(self, *, user_id: str, thread_id: str) -> VideoJob | None:
+        return await self._repository.get_latest_for_thread(user_id=user_id, thread_id=thread_id)
 
     async def can_user_retry(self, job: VideoJob) -> bool:
         if job.status not in {VideoJobStatus.FAILED, VideoJobStatus.CANCELED}:
@@ -296,8 +347,17 @@ class CloudRunVideoJobClient:
         )
 
     async def cancel(self, job_id: str) -> VideoJob:
-        job = await self._repository.request_cancel(job_id)
-        if job.status is VideoJobStatus.QUEUED:
+        before = await self._repository.get(job_id)
+        job = await self._repository.request_cancel(
+            job_id,
+            refund_amount=self._video_refund_amount,
+        )
+        if (
+            before is not None
+            and before.status is VideoJobStatus.QUEUED
+            and before.lease_holder_instance_id is None
+            and job.status is VideoJobStatus.CANCELED
+        ):
             try:
                 await self._queue.delete(job.cloud_tasks_name)
             except Exception:
@@ -307,3 +367,82 @@ class CloudRunVideoJobClient:
                     job.cloud_tasks_name,
                 )
         return job
+
+    async def check_stuck_job(
+        self,
+        job_id: str,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> VideoJob | None:
+        job = await self.get_progress(job_id, user_id=user_id)
+        if job is None:
+            return None
+
+        if _running_job_is_stale(job, running_stale_after_seconds):
+            return await self._repository.mark_running_stuck(
+                job.id,
+                user_id=user_id,
+                stale_after_seconds=running_stale_after_seconds,
+                refund_amount=self._video_refund_amount,
+            )
+        if _queued_job_is_stale(job, queued_stale_after_seconds) and await self._queue.task_missing(
+            job.cloud_tasks_name
+        ):
+            return await self._repository.mark_queued_missing(
+                job.id,
+                user_id=user_id,
+                stale_after_seconds=queued_stale_after_seconds,
+                refund_amount=self._video_refund_amount,
+            )
+        return job
+
+    async def sweep_stuck_jobs(
+        self,
+        *,
+        user_id: str,
+        running_stale_after_seconds: int,
+        queued_stale_after_seconds: int,
+    ) -> int:
+        candidates = await self._repository.list_lazy_detection_candidates(
+            user_id=user_id,
+            running_stale_after_seconds=running_stale_after_seconds,
+            queued_stale_after_seconds=queued_stale_after_seconds,
+        )
+        cleaned = 0
+        for job in candidates:
+            if job.status is VideoJobStatus.RUNNING:
+                updated = await self._repository.mark_running_stuck(
+                    job.id,
+                    user_id=user_id,
+                    stale_after_seconds=running_stale_after_seconds,
+                    refund_amount=self._video_refund_amount,
+                )
+            elif await self._queue.task_missing(job.cloud_tasks_name):
+                updated = await self._repository.mark_queued_missing(
+                    job.id,
+                    user_id=user_id,
+                    stale_after_seconds=queued_stale_after_seconds,
+                    refund_amount=self._video_refund_amount,
+                )
+            else:
+                continue
+
+            if job.status not in {VideoJobStatus.FAILED, VideoJobStatus.CANCELED} and (
+                updated.status in {VideoJobStatus.FAILED, VideoJobStatus.CANCELED}
+            ):
+                cleaned += 1
+        return cleaned
+
+
+def _running_job_is_stale(job: VideoJob, stale_after_seconds: int) -> bool:
+    if job.status is not VideoJobStatus.RUNNING or job.progress_updated_at is None:
+        return False
+    return job.progress_updated_at < datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+
+
+def _queued_job_is_stale(job: VideoJob, stale_after_seconds: int) -> bool:
+    if job.status is not VideoJobStatus.QUEUED:
+        return False
+    return job.created_at < datetime.now(UTC) - timedelta(seconds=stale_after_seconds)

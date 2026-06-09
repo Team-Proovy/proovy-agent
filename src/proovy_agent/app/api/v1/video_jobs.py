@@ -8,6 +8,7 @@ from proovy_agent.app.schemas.video_jobs import (
     CreateVideoJobRequest,
     VideoJobProgressResponse,
 )
+from proovy_agent.common.config import settings
 from proovy_agent.features.video.jobs import (
     NoopVideoArtifactUrlResolver,
     VideoArtifactUrlResolver,
@@ -50,6 +51,25 @@ async def _resolve_final_video_url(
         return None
 
 
+async def build_video_job_response(
+    job: VideoJob,
+    *,
+    client: VideoJobClient,
+    artifact_url_resolver: VideoArtifactUrlResolver,
+) -> VideoJobProgressResponse:
+    can_user_retry = await client.can_user_retry(job)
+    final_video_url = await _resolve_final_video_url(job, artifact_url_resolver)
+    return VideoJobProgressResponse.from_job(
+        job,
+        can_user_retry=can_user_retry,
+        user_diagnostic=build_user_diagnostic(
+            job,
+            final_video_url=final_video_url,
+            can_user_retry=can_user_retry,
+        ),
+    )
+
+
 @router.post(
     "",
     status_code=status.HTTP_410_GONE,
@@ -72,18 +92,47 @@ async def get_video_job_progress(
     artifact_url_resolver: VideoArtifactUrlResolver = Depends(get_video_artifact_url_resolver),
 ) -> VideoJobProgressResponse:
     """Return the latest progress for a single video job."""
+    await client.check_stuck_job(
+        job_id,
+        user_id=user_id,
+        running_stale_after_seconds=settings.video_stuck_job_threshold_seconds,
+        queued_stale_after_seconds=settings.video_queued_task_check_seconds,
+    )
     job = await client.get_progress(job_id, user_id=user_id)
     if job is None:
         raise HTTPException(status_code=404, detail="video job not found")
 
-    can_user_retry = await client.can_user_retry(job)
-    final_video_url = await _resolve_final_video_url(job, artifact_url_resolver)
-    return VideoJobProgressResponse.from_job(
+    return await build_video_job_response(
         job,
-        can_user_retry=can_user_retry,
-        user_diagnostic=build_user_diagnostic(
-            job,
-            final_video_url=final_video_url,
-            can_user_retry=can_user_retry,
-        ),
+        client=client,
+        artifact_url_resolver=artifact_url_resolver,
+    )
+
+
+@router.post("/{job_id}/cancel", response_model=VideoJobProgressResponse)
+async def cancel_video_job(
+    job_id: str,
+    user_id: str = Query(..., description="사용자 ID"),
+    client: VideoJobClient = Depends(get_video_job_client),
+    artifact_url_resolver: VideoArtifactUrlResolver = Depends(get_video_artifact_url_resolver),
+) -> VideoJobProgressResponse:
+    """Cancel a queued job immediately or request cooperative running-job cancel."""
+    existing = await client.get_progress(job_id, user_id=user_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="video job not found")
+
+    job = await client.cancel(job_id)
+    if job.status is VideoJobStatus.RUNNING:
+        checked = await client.check_stuck_job(
+            job_id,
+            user_id=user_id,
+            running_stale_after_seconds=settings.video_stuck_job_threshold_seconds,
+            queued_stale_after_seconds=settings.video_queued_task_check_seconds,
+        )
+        if checked is not None:
+            job = checked
+    return await build_video_job_response(
+        job,
+        client=client,
+        artifact_url_resolver=artifact_url_resolver,
     )
