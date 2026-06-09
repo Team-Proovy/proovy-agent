@@ -40,4 +40,7 @@ sprint: ""
 
 - CJK 폰트 누락 시 tofu(글자 깨짐) — health check가 build/startup에서 잡음
 - read-only rootfs 노브 없음 → 비루트 + 크기제한 볼륨 + 일회성으로 대체 (ADR 0003)
+- 2.05 sandbox hard gate는 render runtime이 root이거나 Landlock write allowlist를
+  설치하지 못하면 render를 실패 처리한다. worker Dockerfile은 non-root `USER`와
+  `VIDEO_RENDER_WORKSPACE_ROOT` 쓰기 권한을 반드시 포함해야 한다.
 - 최종 보고에 Artifact Registry, image push, Cloud Run startup probe, font/TeX runtime 설치 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.

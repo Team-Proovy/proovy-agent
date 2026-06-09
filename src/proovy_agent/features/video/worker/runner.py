@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+import json
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 import uuid
 
 from proovy_agent.features.video.exceptions import PipelineError, classify_failure
@@ -27,9 +29,6 @@ from proovy_agent.features.video.pipeline import (
 from proovy_agent.features.video.pipeline import (
     run_job as run_pipeline_job,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 class PipelineRunner(Protocol):
@@ -52,6 +51,7 @@ _STAGES: tuple[StageName, ...] = (
     StageName.COMPOSE,
 )
 _STAGE_INDEX: Mapping[StageName, int] = {stage: index for index, stage in enumerate(_STAGES)}
+_ERROR_DETAIL_MAX_CHARS = 8000
 
 
 class VideoWorkerRunStatus(StrEnum):
@@ -171,6 +171,7 @@ class VideoWorkerRunner:
         cancel_poll_interval_seconds: float = 10.0,
         job_max_runtime_seconds: float = 1200.0,
         pipeline_runner: PipelineRunner = run_pipeline_job,
+        render_sandbox: object | None = None,
     ) -> None:
         self._repository = repository
         self._instance_id = instance_id
@@ -179,6 +180,7 @@ class VideoWorkerRunner:
         self._cancel_poll_interval_seconds = cancel_poll_interval_seconds
         self._job_max_runtime_seconds = job_max_runtime_seconds
         self._pipeline_runner = pipeline_runner
+        self._render_sandbox = render_sandbox
 
     async def run(self, job_id: str) -> VideoWorkerRunResult:
         """Run one video job if this worker can acquire its lease."""
@@ -218,6 +220,7 @@ class VideoWorkerRunner:
             )
 
         ctx = StageContext(
+            sandbox=self._render_sandbox,
             cancel_event=cancel_event,
             progress_handler=progress_writer.handle_stage_event,
             segment_progress_handler=progress_writer.handle_segment_progress,
@@ -384,7 +387,7 @@ class VideoWorkerRunner:
             status=VideoJobStatus.FAILED,
             error_stage=error_stage,
             user_error_code=user_error_code,
-            error_detail=type(exc).__name__,
+            error_detail=_failure_error_detail(exc),
         )
 
 
@@ -412,3 +415,77 @@ def _segment_progress(event: SegmentProgressEvent) -> dict[str, int]:
 def _final_artifact_key(job_id: str, *, attempt_id: str, output_path: str) -> str:
     filename = PurePosixPath(output_path).name or "final.mp4"
     return f"video-jobs/{job_id}/attempts/{attempt_id}/{filename}"
+
+
+def _failure_error_detail(exc: Exception) -> str:
+    payload: dict[str, object] = {"error_type": type(exc).__name__}
+    if isinstance(exc, PipelineError):
+        latex_validation_errors = _latex_validation_errors_from_details(exc.details)
+        if latex_validation_errors:
+            payload["diagnostics"] = {
+                "template": {"latex_validation_errors": latex_validation_errors}
+            }
+    return _json_dumps_bounded(payload)
+
+
+def _json_dumps_bounded(payload: dict[str, object]) -> str:
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    if len(serialized) <= _ERROR_DETAIL_MAX_CHARS:
+        return serialized
+
+    errors = _mutable_latex_validation_errors(payload)
+    while errors and len(serialized) > _ERROR_DETAIL_MAX_CHARS:
+        errors.pop()
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    if len(serialized) <= _ERROR_DETAIL_MAX_CHARS:
+        return serialized
+    return json.dumps({"error_type": str(payload.get("error_type", "Exception"))})
+
+
+def _mutable_latex_validation_errors(payload: dict[str, object]) -> list[dict[str, object]]:
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        return []
+    template = diagnostics.get("template")
+    if not isinstance(template, dict):
+        return []
+    errors = template.get("latex_validation_errors")
+    if not isinstance(errors, list):
+        return []
+    return errors
+
+
+def _latex_validation_errors_from_details(details: Mapping[str, object]) -> list[dict[str, object]]:
+    direct_errors = details.get("latex_validation_errors")
+    if isinstance(direct_errors, list):
+        return _safe_latex_validation_errors(direct_errors)
+
+    diagnostics = details.get("diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return []
+    template = diagnostics.get("template")
+    if not isinstance(template, Mapping):
+        return []
+    errors = template.get("latex_validation_errors")
+    if not isinstance(errors, list):
+        return []
+    return _safe_latex_validation_errors(errors)
+
+
+def _safe_latex_validation_errors(errors: list[object]) -> list[dict[str, object]]:
+    safe_errors: list[dict[str, object]] = []
+    for error in errors[:20]:
+        if not isinstance(error, Mapping):
+            continue
+        safe_error: dict[str, object] = {}
+        for key in ("message", "error_code", "severity", "original_snippet"):
+            value = error.get(key)
+            if isinstance(value, str):
+                safe_error[key] = value[:300]
+        for key in ("line", "column"):
+            value = error.get(key)
+            if isinstance(value, int):
+                safe_error[key] = value
+        if safe_error:
+            safe_errors.append(safe_error)
+    return safe_errors

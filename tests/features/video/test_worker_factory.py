@@ -5,6 +5,7 @@ import pytest
 from proovy_agent.common.config import Settings
 from proovy_agent.features.video.jobs import PostgresVideoJobRepository
 from proovy_agent.features.video.worker import VideoWorkerRunner, create_video_worker_runner
+from proovy_agent.features.video.worker.sandbox import ManimRenderSandbox
 
 
 def test_video_worker_factory_requires_database_url_even_in_debug() -> None:
@@ -25,3 +26,4 @@ def test_video_worker_factory_uses_postgres_repository() -> None:
 
     assert isinstance(runner, VideoWorkerRunner)
     assert isinstance(runner._repository, PostgresVideoJobRepository)
+    assert isinstance(runner._render_sandbox, ManimRenderSandbox)
