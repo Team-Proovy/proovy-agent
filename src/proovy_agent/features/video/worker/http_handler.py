@@ -13,6 +13,7 @@ from proovy_agent.features.video.models import (
     VideoJobStatus,  # noqa: TC001 - Pydantic response model needs runtime type
 )
 from proovy_agent.features.video.worker.factory import create_video_worker_runner
+from proovy_agent.features.video.worker.healthcheck import WorkerHealthReport, runtime_healthcheck
 from proovy_agent.features.video.worker.runner import (
     VideoWorkerRetryableError,
     VideoWorkerRunner,
@@ -64,6 +65,13 @@ def _configured_auth_token(request: Request) -> str:
     return getattr(request.app.state, "video_worker_auth_token", settings.video_worker_auth_token)
 
 
+async def _run_video_worker_healthcheck(request: Request) -> WorkerHealthReport:
+    healthcheck = getattr(request.app.state, "video_worker_healthcheck", None)
+    if healthcheck is not None:
+        return await healthcheck()
+    return await runtime_healthcheck(settings)
+
+
 def _bearer_token(authorization: str | None) -> str | None:
     if authorization is None:
         return None
@@ -92,6 +100,18 @@ def verify_video_worker_auth(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid video worker credentials",
         )
+
+
+@router.get("/health", response_model=WorkerHealthReport)
+async def video_worker_health(request: Request) -> WorkerHealthReport:
+    """Return startup-probe health for the video worker runtime."""
+    report = await _run_video_worker_healthcheck(request)
+    if not report.healthy:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=report.model_dump(),
+        )
+    return report
 
 
 @router.post(

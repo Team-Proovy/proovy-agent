@@ -33,9 +33,12 @@ sprint: ""
 - [ ] Cloud Tasks queue, dispatch deadline, retry config, rate limit, IAM(OIDC 또는 Phase B 임시 token) 확인
 - [ ] Cloud Run gen2 worker 서비스 URL, ingress/auth, concurrency=1, max instances, timeout 확인
 - [ ] Artifact Registry worker image, Secret Manager, runtime env 설정 확인
+      (`SERVICE_NAME_WORKER` 미설정 시 `${SERVICE_NAME_AGENT}-worker` 이미지명 사용)
 - [ ] 2.05 sandbox runtime 확인: worker image non-root `USER`, Landlock write
       allowlist 사용 가능 커널, `VIDEO_RENDER_WORKSPACE_ROOT` 쓰기 권한, 크기제한
       in-memory volume mount, render subprocess secret/env scrub smoke 확인
+- [ ] Cloud Run worker startup probe를 `/jobs/health`로 설정하고, probe timeout은
+      cold Manim import/TeX 확인 시간을 감안해 90초 이상으로 둔다.
 - [ ] GCS bucket, object key prefix, lifecycle, signed URL 또는 public access 정책 확인
 - [ ] DB `DATABASE_URL` / migration 적용 / `video_jobs` 상태 갱신 권한 확인
 - [ ] dev E2E 실행 환경에 manim / TeX / CJK 폰트 전제가 필요한지 분리 확인
@@ -57,6 +60,14 @@ sprint: ""
       `deleteTask`와 enqueue/lazy detection reconciliation의 `getTask` 권한이 필요하다.
       running cancel, permanent failure, transient retry, queued/running stuck cleanup의
       terminal+refund idempotency를 실제 GCP 리소스로 검증한다.
+- [ ] 2.08 완료 보고에서 확인된 항목: worker image는 `Dockerfile.worker`에서
+      `worker` optional extra(`manim`)와 TeX Live/`xeCJK`/`ctex`, Noto CJK 폰트,
+      ffmpeg/ffprobe를 설치한다. GitHub Actions는 PR에서 worker image build를,
+      PR/dev push 모두에서 startup healthcheck를, `dev` push에서 Artifact Registry push를 수행한다. 실제 GCP에서는 기존
+      deploy secret(`GCP_SA_KEY`, `GCP_REGION`, `GCP_PROJECT_ID`, `AR_REPO_AGENT`,
+      `SERVICE_NAME_AGENT` 및 선택 `SERVICE_NAME_WORKER`)과 worker Cloud Run startup
+      probe(`/jobs/health`), `VIDEO_CJK_FONT` override 필요 여부, 크기제한
+      `VIDEO_RENDER_WORKSPACE_ROOT` in-memory volume, Landlock availability를 검증한다.
 
 ## 구현 체크리스트
 

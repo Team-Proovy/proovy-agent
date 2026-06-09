@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from proovy_agent.features.video.models import VideoJobStatus
+from proovy_agent.features.video.worker.healthcheck import WorkerHealthCheck, WorkerHealthReport
 from proovy_agent.features.video.worker.http_handler import router
 from proovy_agent.features.video.worker.runner import (
     VideoWorkerRetryableError,
@@ -99,3 +100,49 @@ def test_worker_http_handler_rejects_missing_auth_configuration() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "video worker auth token is not configured"
+
+
+def test_worker_health_endpoint_returns_startup_probe_report_without_auth() -> None:
+    async def healthcheck() -> WorkerHealthReport:
+        return WorkerHealthReport(
+            status="ok",
+            checks=[WorkerHealthCheck(name="manim", status="ok", detail="Manim Community")],
+        )
+
+    app = FastAPI()
+    app.state.video_worker_runner = _FakeRunner()
+    app.state.video_worker_auth_token = "worker-secret"
+    app.state.video_worker_healthcheck = healthcheck
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.get("/jobs/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "checks": [{"name": "manim", "status": "ok", "detail": "Manim Community"}],
+    }
+
+
+def test_worker_health_endpoint_returns_503_for_failed_runtime_check() -> None:
+    async def healthcheck() -> WorkerHealthReport:
+        return WorkerHealthReport(
+            status="failed",
+            checks=[WorkerHealthCheck(name="cjk_font", status="failed", detail="missing")],
+        )
+
+    app = FastAPI()
+    app.state.video_worker_runner = _FakeRunner()
+    app.state.video_worker_auth_token = "worker-secret"
+    app.state.video_worker_healthcheck = healthcheck
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.get("/jobs/health")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "status": "failed",
+        "checks": [{"name": "cjk_font", "status": "failed", "detail": "missing"}],
+    }

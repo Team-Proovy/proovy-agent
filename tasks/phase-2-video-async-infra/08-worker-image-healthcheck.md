@@ -7,7 +7,8 @@ issue: "90"
 depends_on: ["2.05"]
 blocks: ["2.09"]
 estimate: "S"
-status: "todo"
+status: "done"
+completed_at: 2026-06-09
 owner: ""
 sprint: ""
 ---
@@ -24,17 +25,18 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] PoC §9.2 Dockerfile 참조 (TeX/ffmpeg/폰트) — **PoC = 외부 repo `manim-video-gen`** (이 repo 아님)
+- [x] PoC §9.2 Dockerfile 참조 (TeX/ffmpeg/폰트) — **PoC = 외부 repo `manim-video-gen`** (이 repo 아님)
 
 ## 구현 체크리스트
 
-- [ ] 워커 Dockerfile (비루트 + **Python deps[manim 포함]** + TeX Live + CJK 폰트 + ffmpeg) + CI 빌드/푸시
-- [ ] Runtime health check (build-time + startup probe — manim/TeX/폰트 존재 확인)
+- [x] 워커 Dockerfile (비루트 + **Python deps[manim 포함]** + TeX Live + CJK 폰트 + ffmpeg) + CI 빌드/푸시
+- [x] Runtime health check (build-time + startup probe — manim/TeX/폰트 존재 확인)
 
 ## Definition of Done
 
-- [ ] 이미지 빌드 + startup probe 통과 (폰트/TeX 검증)
-- [ ] CI 빌드/푸시 통과
+- [x] 이미지 빌드 + startup probe 통과 (폰트/TeX 검증)
+- [x] CI 빌드/푸시 경로 구성 (`pull_request`는 build+startup healthcheck,
+      `dev` push는 build+startup healthcheck+push)
 
 ## 리스크 / 메모
 
@@ -44,3 +46,9 @@ sprint: ""
   설치하지 못하면 render를 실패 처리한다. worker Dockerfile은 non-root `USER`와
   `VIDEO_RENDER_WORKSPACE_ROOT` 쓰기 권한을 반드시 포함해야 한다.
 - 최종 보고에 Artifact Registry, image push, Cloud Run startup probe, font/TeX runtime 설치 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.
+- 완료 메모(2.08): `Dockerfile.worker`는 `renderer` UID 10001, `worker`
+  optional extra(`manim`), TeX Live/`xeCJK`/`ctex`, Noto CJK 폰트, ffmpeg/ffprobe를
+  포함한다. `python -m proovy_agent.features.video.worker.healthcheck --build`가
+  build-time CJK Manim smoke render를 실행한다. Docker `HEALTHCHECK`/`/jobs/health`와
+  CI startup step은 startup에서 non-root, workspace write, Landlock,
+  Manim/TeX/CJK/ffmpeg 존재를 검증한다.
