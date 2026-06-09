@@ -5,7 +5,7 @@ title: "잡 모델(VideoJob)+migration + Cloud Tasks 클라이언트·progress A
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "83"
 depends_on: ["1.04"]
-blocks: ["2.04", "2.06"]
+blocks: ["2.04", "2.06", "2.09"]
 estimate: "M"
 status: "todo"
 owner: ""
@@ -44,3 +44,4 @@ sprint: ""
 
 - `VideoJobSegment` 테이블은 **Phase D로 미룸** — MVP는 `video_jobs.progress` dict + `internal.json`으로 충분
 - `VideoJobClient`는 Protocol 유지 (테스트용 Fake + 향후 Cloud Run Jobs 전환 대비)
+- 최종 보고에 GCP 큐/IAM/env 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.

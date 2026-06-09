@@ -4,7 +4,7 @@ phase: 3
 title: "graph_plot expression DSL (func_python lambda 제거 + sympy 파서)"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "92"
-depends_on: ["1.06", "2.05"]
+depends_on: ["1.06", "2.05", "2.09"]
 blocks: []
 estimate: "M"
 status: "todo"
@@ -22,6 +22,7 @@ sprint: ""
 
 - 1.06 (파이프라인 스켈레톤) — `graph_plot` visual_type을 VisualTypeRegistry에 등록 **[cross-phase]**
 - 2.05 (sandbox) — graph_plot도 manim 렌더를 sandbox sub-process에서 실행 **[cross-phase]**
+- 2.09 (Real GCP integration E2E) — 실제 worker/GCS 결과 표시 경로 검증 후 graph_plot 확장 **[cross-phase]**
 
 ## 사전 준비
 

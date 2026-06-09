@@ -10,6 +10,7 @@ from proovy_agent.features.video.pipeline.inline_runner import (
 )
 from proovy_agent.features.video.pipeline.orchestrator import run_job
 from proovy_agent.features.video.pipeline.stage_context import (
+    SegmentProgressEvent,
     StageContext,
     StageEvent,
     StageEventStatus,
@@ -22,6 +23,7 @@ __all__ = [
     "LocalInlineArtifactUploader",
     "PhaseAInlineRenderError",
     "PhaseAInlineRunner",
+    "SegmentProgressEvent",
     "StageContext",
     "StageEvent",
     "StageEventStatus",

@@ -26,6 +26,7 @@ from .models import (
     ProcessingMetadata,
     VLMResult,
 )
+from .ocr_node import OCRNode, ocr_node
 from .vlm_engine import VLMEngine
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "MathPattern",
     "MathPostProcessor",
     "OCRError",
+    "OCRNode",
     "OCROptions",
     "OCRRequest",
     "OCRResourceError",
@@ -56,4 +58,5 @@ __all__ = [
     "VLMProcessingError",
     "VLMResult",
     "create_command_parser",
+    "ocr_node",
 ]

@@ -19,4 +19,4 @@
 - 한 solve 직후 `state.messages`에 `code_execute.args.code`·stdout ToolMessage·`kind="verified_solution"` AIMessage 셋이 모두 존재한다 (ADR 0006 evidence 회귀 가드).
 - hint_extractor 단위 테스트가 Stage 1a 대상 식별 정확도와 Stage 1b 환각 회귀(stdout 숫자가 `final_answer`에 보존)를 통과한다.
 - `brief` 모드에서 CoreSolver가 Phase 2 설명을 생략하고 verified_solution을 `display="content"`로 노출한다.
-- 샘플 문제 1건 E2E 스모크가 실제 mp4를 GCS에 올리고 결과가 표시되는 것까지 통과한다.
+- 샘플 문제 1건 E2E 스모크가 실제 mp4 생성과 결과 표시까지 통과한다. 실제 GCS/GCP 연결 검증은 Phase B 최종 게이트 2.09에서 수행한다.

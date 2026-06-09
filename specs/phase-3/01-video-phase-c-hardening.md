@@ -3,7 +3,7 @@
 > 매핑: 설계 문서 `docs/architecture/video-generation-design.md §7`의 **Phase C** = 본 `specs/phase-3`. 선행: Phase B (`specs/phase-2`).
 
 ## Purpose
-자유형 `visual_scene`·`graph_plot`을 안전하게 도입하고, AST allowlist 강화·intent-preserving fallback·관측성·TTS 동기로 영상 파이프라인을 강건화한다.
+자유형 `visual_scene`·`graph_plot`을 안전하게 도입하고, AST allowlist 강화·intent-preserving fallback·관측성·TTS 동기로 영상 파이프라인을 강건화한다. Phase C의 실제 worker/GCS 기반 작업은 2.09 Real GCP integration E2E 완료 이후 진행한다.
 
 ## Requirements
 - `code_validator.py`의 AST 거부 검사를 강화하고 자유 영역 import를 화이트리스트(manim/numpy/math만 허용)로 좁히며, smoke render 직전 검증 실패 시 사유를 주입해 LLM 재시도(3회)하도록 한다.

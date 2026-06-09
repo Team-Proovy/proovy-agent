@@ -4,7 +4,7 @@ phase: 3
 title: "deterministic template timeline→scene 주입 계약"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "123"
-depends_on: ["1.08", "3.07"]
+depends_on: ["1.08", "3.07", "2.09"]
 blocks: []
 estimate: "M"
 status: "todo"
@@ -22,6 +22,7 @@ sprint: ""
 
 - 1.08 (deterministic 템플릿) — template `manim_source` 생성 경로
 - 3.07 (word-timestamp 시각 강조 동기) — `stage_render`의 `diagnostics["timeline"]`
+- 2.09 (Real GCP integration E2E) — 실제 renderer/worker 소비 경로 확정 후 timeline 주입 계약 검증 **[cross-phase]**
 
 ## 사전 준비
 

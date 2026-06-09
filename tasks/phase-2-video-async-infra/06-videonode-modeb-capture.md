@@ -5,7 +5,7 @@ title: "VideoNode Mode B 전환 + 영상 10cr 동기 capture"
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "88"
 depends_on: ["2.01", "2.02", "1.10"]
-blocks: ["2.07"]
+blocks: ["2.07", "2.09"]
 estimate: "M"
 status: "todo"
 owner: ""
@@ -45,3 +45,4 @@ sprint: ""
 
 - createTask 실패 보상: `NOT_FOUND` + `queued` + `lease_holder=NULL`일 때만 failed+환불. 확인 불가는 lazy detection(2.07)에서 재확인
 - 워커는 messages 무관여 — anchor + DB(휘발성 상태)가 진실의 원천 ("messages 단일 소스" 문서화된 예외)
+- 최종 보고에 Cloud Tasks enqueue, capture transaction, worker URL/env 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.
