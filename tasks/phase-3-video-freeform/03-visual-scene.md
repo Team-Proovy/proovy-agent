@@ -4,7 +4,7 @@ phase: 3
 title: "visual_scene visual_type (LLM-codegen + AST 통합 + smoke render)"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "93"
-depends_on: ["3.01", "1.06"]
+depends_on: ["3.01", "1.06", "2.09"]
 blocks: ["3.04"]
 estimate: "M"
 status: "todo"
@@ -22,6 +22,7 @@ sprint: ""
 
 - 3.01 (AST allowlist) — visual_scene LLM 코드를 검증
 - 1.06 (파이프라인 스켈레톤) — VisualTypeRegistry 등록 **[cross-phase]**
+- 2.09 (Real GCP integration E2E) — 실제 worker/GCS 기반이 검증된 뒤 자유형 visual_type 도입 **[cross-phase]**
 
 ## 사전 준비
 

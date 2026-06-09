@@ -34,7 +34,7 @@ sprint: ""
 
 - [ ] `graph/nodes/video.py` 임시 inline 스캐폴드 (`inline_runner.run_now`, blocking 허용 — throwaway)
 - [ ] `graph/builder.py`: Planner video plan_step 인식 + PlanExecutor dispatch (`_DEPENDS_ON_SOLVE` 게이트)
-- [ ] 샘플 문제 1건 E2E 스모크 — 실제 mp4가 GCS에 업로드되고 결과 표시
+- [ ] 샘플 문제 1건 E2E 스모크 — 실제 mp4 생성과 결과 표시 (실제 GCS 연결 검증은 2.09에서 수행)
 
 ## Definition of Done
 
@@ -45,3 +45,4 @@ sprint: ""
 
 - inline runner가 manim/TeX/ffmpeg를 **메인 API 프로세스에서 import** — §5.3 격리 경계의 Phase A 한정 예외(throwaway). Phase B 2.06에서 제거 + 워커 분리
 - 이 노드는 5~10분 blocking — Mode B는 2.06에서
+- 실제 GCS 업로드와 GCP 리소스 연결 검증은 Phase B 최종 게이트 2.09로 이관한다. 1.10 최종 보고에 GCS/GCP 사용자 조치 필요 항목이 나오면 2.09에 누적한다.

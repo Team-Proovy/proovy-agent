@@ -5,7 +5,7 @@ title: "워커 서비스 (http_handler + runner + progress + cancel poll)"
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "86"
 depends_on: ["2.01", "1.07", "1.08"]
-blocks: ["2.05", "3.06"]
+blocks: ["2.05", "2.09", "3.06"]
 estimate: "M"
 status: "review"
 completed_at: 2026-06-04
@@ -48,3 +48,5 @@ sprint: ""
 - heartbeat(lease 생존 신호)와 progress write(SSE 진행률)는 **독립** — 혼동 금지 (CONTEXT.md)
 - 1 instance = 1 job (concurrency=1). 재시도 = 전체 재실행 (캐시/checkpoint 없음)
 - MVP에서는 live foreign lease 중복 delivery를 `skipped_busy`로 200 ack하고, stale cleanup 백스톱은 2.07 lazy detection에서 처리
+- 완료 보고 기준 사용자 조치: 배포 시 `VIDEO_WORKER_AUTH_TOKEN` 설정과 Cloud Tasks 호출 헤더 설정은 2.09에서 실제 GCP 리소스로 검증한다.
+- 최종 보고에 worker auth, Cloud Run 배포, service env/secret 등 사용자 조치 필요 항목이 추가되면 2.09 Real GCP integration E2E에 누적한다.

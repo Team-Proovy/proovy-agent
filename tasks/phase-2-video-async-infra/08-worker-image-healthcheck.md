@@ -5,7 +5,7 @@ title: "워커 이미지 Dockerfile(비루트+폰트) + CI + runtime health chec
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "90"
 depends_on: ["2.05"]
-blocks: []
+blocks: ["2.09"]
 estimate: "S"
 status: "todo"
 owner: ""
@@ -40,3 +40,4 @@ sprint: ""
 
 - CJK 폰트 누락 시 tofu(글자 깨짐) — health check가 build/startup에서 잡음
 - read-only rootfs 노브 없음 → 비루트 + 크기제한 볼륨 + 일회성으로 대체 (ADR 0003)
+- 최종 보고에 Artifact Registry, image push, Cloud Run startup probe, font/TeX runtime 설치 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.

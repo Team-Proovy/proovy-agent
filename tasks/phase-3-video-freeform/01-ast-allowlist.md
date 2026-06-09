@@ -4,7 +4,7 @@ phase: 3
 title: "AST allowlist 강화 (code_validator + 화이트리스트 + 재시도 주입)"
 spec: "specs/phase-3/01-video-phase-c-hardening.md"
 issue: "91"
-depends_on: ["2.05"]
+depends_on: ["2.05", "2.09"]
 blocks: ["3.03"]
 estimate: "M"
 status: "todo"
@@ -21,6 +21,7 @@ sprint: ""
 ## 의존성
 
 - 2.05 (sandbox) — validator는 워커 render 경로의 smoke render 직전에 실행 **[cross-phase]**
+- 2.09 (Real GCP integration E2E) — 실제 worker/GCP 기반이 검증된 뒤 Phase C hardening 진행 **[cross-phase]**
 
 ## 사전 준비
 

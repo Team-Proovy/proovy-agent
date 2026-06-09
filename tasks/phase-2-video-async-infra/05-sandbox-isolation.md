@@ -5,7 +5,7 @@ title: "platform-features sandbox (manim render sub-process 격리)"
 spec: "specs/phase-2/01-video-phase-b-async-infra.md"
 issue: "87"
 depends_on: ["2.04"]
-blocks: ["2.07", "2.08", "3.01", "3.02", "3.05"]
+blocks: ["2.07", "2.08", "2.09", "3.01", "3.02", "3.05"]
 estimate: "M"
 status: "todo"
 owner: ""
@@ -55,3 +55,4 @@ sprint: ""
 
 - 워커는 LLM 생성 코드를 직접 import/eval하지 않는다 — 항상 sub-process `manim render` 경유
 - network-off(egress 차단 별도 서비스)는 후속 — AST allowlist(3.01)가 1차 네트워크 차단
+- 최종 보고에 Cloud Run sandbox 설정, runtime 권한, secret/env 전달 차단 등 사용자 조치 필요 항목이 있으면 2.09 Real GCP integration E2E에 누적한다.
