@@ -1,28 +1,32 @@
-"""VideoNode Phase A inline scaffold tests."""
+"""VideoNode Mode B launcher tests."""
 
-import asyncio
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
+from proovy_agent.features.credits.models import CreditHold, CreditHoldStatus
 from proovy_agent.features.video.hint_extractor import HintExtractionResult
+from proovy_agent.features.video.jobs import VideoCreditCapture
+from proovy_agent.features.video.jobs.repository import (
+    RetryAlreadyUsedError,
+    default_cloud_tasks_name,
+)
 from proovy_agent.features.video.models import (
     DirectorBriefPolicy,
-    FinalVideoArtifact,
-    RenderedSegment,
-    ScriptSegment,
-    SegmentTTSResult,
     SolutionPlan,
     SolutionStep,
     TargetSelection,
     VideoHints,
-    VideoPipelineJob,
-    VideoPipelineResult,
-    VideoScript,
+    VideoJob,
+    VideoJobInput,
+    VideoJobStatus,
 )
-from proovy_agent.features.video.pipeline import InlineVideoArtifact
+from proovy_agent.graph.credit_pricing import VIDEO_FLAT_COST
 from proovy_agent.graph.nodes import video_node as video_node_module
+from proovy_agent.graph.runtime import current_credit_ledger_client, current_video_job_client
 from proovy_agent.graph.state import PlanStep, ProovyState
 
 
@@ -48,6 +52,14 @@ def _video_hints() -> VideoHints:
     )
 
 
+def _video_input() -> VideoJobInput:
+    return VideoJobInput(
+        problem_text="x - 3 = 2를 풀어라.",
+        solution_plan=_solution_plan(),
+        video_hints=_video_hints(),
+    )
+
+
 def _extraction_result() -> HintExtractionResult:
     return HintExtractionResult(
         problem_text="x - 3 = 2를 풀어라.",
@@ -62,74 +74,61 @@ def _extraction_result() -> HintExtractionResult:
     )
 
 
-def _pipeline_result(job_id: str, output_path: Path) -> VideoPipelineResult:
-    script = VideoScript(
-        title="일차방정식",
-        segments=[
-            ScriptSegment(
-                segment_id="step-1",
-                order=1,
-                visual_type="equation_write",
-                narration="양변에 3을 더합니다.",
-                params={
-                    "latex_expression": "x = 5",
-                    "visual_description": "핵심 식을 표시합니다.",
-                },
-                source_step_number=1,
-            )
-        ],
-        final_answer="x = 5",
-    )
-    return VideoPipelineResult(
-        job_id=job_id,
-        solution_plan=_solution_plan(),
-        script=script,
-        tts_results=[SegmentTTSResult(segment_id="step-1", narration="양변에 3을 더합니다.")],
-        rendered_segments=[
-            RenderedSegment(
-                segment_id="step-1",
-                visual_type="equation_write",
-                video_path=str(output_path),
-            )
-        ],
-        final_video=FinalVideoArtifact(
-            output_path=str(output_path),
-            rendered_segment_count=1,
-        ),
+def _job(job_id: str, input_snapshot: VideoJobInput) -> VideoJob:
+    now = datetime.now(UTC)
+    return VideoJob(
+        id=job_id,
+        user_id="user-1",
+        thread_id="thread-1",
+        problem_hash="problem-hash",
+        input_snapshot=input_snapshot,
+        cloud_tasks_name=default_cloud_tasks_name(job_id),
+        status=VideoJobStatus.QUEUED,
+        progress_updated_at=now,
+        created_at=now,
     )
 
 
-class _FakeRunner:
-    def __init__(self, output_path: Path) -> None:
-        self.output_path = output_path
-        self.jobs: list[VideoPipelineJob] = []
+class _FakeVideoClient:
+    def __init__(self, input_snapshot: VideoJobInput | None = None) -> None:
+        self.input_snapshot = input_snapshot
+        self.create_calls: list[dict[str, object]] = []
 
-    async def run_now(
+    async def create_and_enqueue(
         self,
-        job: VideoPipelineJob,
         *,
-        ctx: object | None = None,
-    ) -> VideoPipelineResult:
-        _ = ctx
-        self.jobs.append(job)
-        return _pipeline_result(job.job_id, self.output_path)
+        user_id: str,
+        thread_id: str,
+        input_snapshot: VideoJobInput | None = None,
+        retry_source_job_id: str | None = None,
+        credit_capture: VideoCreditCapture | None = None,
+    ) -> VideoJob:
+        self.create_calls.append(
+            {
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "input_snapshot": input_snapshot,
+                "retry_source_job_id": retry_source_job_id,
+                "credit_capture": credit_capture,
+            }
+        )
+        return _job("job-1", input_snapshot or self.input_snapshot or _video_input())
 
 
-class _FakeUploader:
+class _FakeLedger:
     def __init__(self) -> None:
-        self.uploads: list[tuple[str, str]] = []
+        self.release_calls: list[tuple[str, UUID]] = []
 
-    async def upload_final_video(
-        self,
-        *,
-        job_id: str,
-        output_path: str,
-    ) -> InlineVideoArtifact:
-        assert await asyncio.to_thread(Path(output_path).exists)
-        self.uploads.append((job_id, output_path))
-        return InlineVideoArtifact(
-            object_key=f"video-jobs/{job_id}/attempts/inline/final.mp4",
-            url="https://storage.example/final.mp4",
+    async def release_hold(self, user_id: str, hold_id: UUID) -> CreditHold:
+        self.release_calls.append((user_id, hold_id))
+        now = datetime.now(UTC)
+        return CreditHold(
+            id=hold_id,
+            user_id=user_id,
+            amount=Decimal("0"),
+            status=CreditHoldStatus.RELEASED,
+            created_at=now,
+            expires_at=now + timedelta(minutes=20),
         )
 
 
@@ -145,56 +144,216 @@ def test_mark_current_step_ignores_negative_index() -> None:
 
 
 @pytest.mark.asyncio
-async def test_video_node_runs_inline_runner_uploads_mp4_and_displays_result(
+async def test_video_node_enqueues_job_captures_credit_and_returns_tool_anchor(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    output_path = tmp_path / "final.mp4"
-    await asyncio.to_thread(output_path.write_bytes, b"fake mp4 bytes")
-    runner = _FakeRunner(output_path)
-    uploader = _FakeUploader()
+    hold_id = uuid4()
+    client = _FakeVideoClient()
 
     async def fake_extract_video_inputs(messages: object) -> HintExtractionResult:
         assert messages
         return _extraction_result()
 
     monkeypatch.setattr(video_node_module, "extract_video_inputs", fake_extract_video_inputs)
-    monkeypatch.setattr(video_node_module, "get_inline_runner", lambda: runner)
-    monkeypatch.setattr(video_node_module, "get_inline_uploader", lambda: uploader)
+    token = current_video_job_client.set(client)
+    try:
+        state = ProovyState(
+            user_id="user-1",
+            thread_id="thread-1",
+            hold_id=str(hold_id),
+            messages=[
+                HumanMessage(content="x - 3 = 2를 풀어라."),
+                AIMessage(
+                    content="x=5입니다.",
+                    metadata={"kind": "verified_solution", "display": "hidden"},
+                ),
+            ],
+            plan=[
+                PlanStep(action="solve", description="풀이", status="done"),
+                PlanStep(action="video", description="영상", status="running"),
+            ],
+            executing_step_idx=1,
+        )
 
-    state = ProovyState(
-        user_id="user-1",
-        thread_id="thread-1",
-        messages=[
-            HumanMessage(content="x - 3 = 2를 풀어라."),
-            AIMessage(
-                content="x=5입니다.",
-                metadata={"kind": "verified_solution", "display": "hidden"},
-            ),
-        ],
-        plan=[
-            PlanStep(action="solve", description="풀이", status="done"),
-            PlanStep(action="video", description="영상", status="running"),
-        ],
-        executing_step_idx=1,
-    )
+        result = await video_node_module.video_node(state)
+    finally:
+        current_video_job_client.reset(token)
 
-    result = await video_node_module.video_node(state)
-
-    assert len(runner.jobs) == 1
-    job = runner.jobs[0]
-    assert job.input_snapshot.problem_text == "x - 3 = 2를 풀어라."
-    assert job.input_snapshot.solution_plan == _solution_plan()
-    assert job.input_snapshot.video_hints == _video_hints()
-    assert uploader.uploads == [(job.job_id, str(output_path))]
+    assert len(client.create_calls) == 1
+    call = client.create_calls[0]
+    assert call["user_id"] == "user-1"
+    assert call["thread_id"] == "thread-1"
+    input_snapshot = call["input_snapshot"]
+    assert isinstance(input_snapshot, VideoJobInput)
+    assert input_snapshot.problem_text == "x - 3 = 2를 풀어라."
+    assert input_snapshot.solution_plan == _solution_plan()
+    assert input_snapshot.video_hints == _video_hints()
+    capture = call["credit_capture"]
+    assert isinstance(capture, VideoCreditCapture)
+    assert capture.hold_id == hold_id
+    assert capture.amount == VIDEO_FLAT_COST
 
     assert result["plan"][1].status == "done"
-    assert result["video_jobs"][0].status == "succeeded"
-    assert result["video_jobs"][0].progress == {"segments_done": 1, "segments_total": 1}
+    assert result["video_jobs"][0].job_id == "job-1"
+    assert result["video_jobs"][0].status == "queued"
+    assert result["credit_log"][0].cost == 10.0
+
     message = result["messages"][0]
-    assert "해설 영상이 준비되었습니다" in message.content
-    assert "https://storage.example/final.mp4" in message.content
-    assert message.metadata["display"] == "video_success"
-    assert message.metadata["mode"] == "phase_a_inline"
-    assert message.metadata["artifact_object_key"].endswith("/final.mp4")
-    assert result["credit_log"][0].cost == 0.0
+    assert "해설 영상을 만들고 있어요" in message.content
+    assert message.metadata["display"] == "tool"
+    assert message.metadata["tool_name"] == "video_generate"
+    assert message.metadata["click_action"] == "open_video_viewer"
+    assert message.metadata["job_id"] == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_video_retry_reuses_persisted_input_snapshot_without_extracting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hold_id = uuid4()
+    client = _FakeVideoClient(input_snapshot=_video_input())
+
+    async def fail_extract_video_inputs(_messages: object) -> HintExtractionResult:
+        raise AssertionError("retry should copy the existing job input snapshot")
+
+    monkeypatch.setattr(video_node_module, "extract_video_inputs", fail_extract_video_inputs)
+    token = current_video_job_client.set(client)
+    try:
+        result = await video_node_module.video_node(
+            ProovyState(
+                user_id="user-1",
+                thread_id="thread-1",
+                hold_id=str(hold_id),
+                messages=[
+                    HumanMessage(
+                        content="이전 영상 다시 만들기",
+                        additional_kwargs={
+                            "action": "video_retry",
+                            "retry_source_job_id": "failed-job-1",
+                        },
+                    )
+                ],
+                plan=[PlanStep(action="video", description="영상", status="running")],
+            )
+        )
+    finally:
+        current_video_job_client.reset(token)
+
+    assert client.create_calls[0]["input_snapshot"] is None
+    assert client.create_calls[0]["retry_source_job_id"] == "failed-job-1"
+    capture = client.create_calls[0]["credit_capture"]
+    assert isinstance(capture, VideoCreditCapture)
+    assert capture.hold_id == hold_id
+    assert capture.amount == VIDEO_FLAT_COST
+    assert result["video_jobs"][0].status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_video_node_rejects_without_credit_hold_before_extracting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeVideoClient()
+
+    async def fail_extract_video_inputs(_messages: object) -> HintExtractionResult:
+        raise AssertionError("video request without a credit hold must stop before extraction")
+
+    monkeypatch.setattr(video_node_module, "extract_video_inputs", fail_extract_video_inputs)
+    token = current_video_job_client.set(client)
+    try:
+        with pytest.raises(video_node_module.VideoNodePreflightError):
+            await video_node_module.video_node(
+                ProovyState(
+                    user_id="user-1",
+                    thread_id="thread-1",
+                    messages=[HumanMessage(content="x - 3 = 2 영상 만들어줘")],
+                    plan=[PlanStep(action="video", description="영상", status="running")],
+                )
+            )
+    finally:
+        current_video_job_client.reset(token)
+
+    assert client.create_calls == []
+
+
+@pytest.mark.asyncio
+async def test_video_retry_defensive_rejection_releases_current_hold() -> None:
+    hold_id = uuid4()
+    ledger = _FakeLedger()
+
+    class _RejectingVideoClient(_FakeVideoClient):
+        async def create_and_enqueue(
+            self,
+            *,
+            user_id: str,
+            thread_id: str,
+            input_snapshot: VideoJobInput | None = None,
+            retry_source_job_id: str | None = None,
+            credit_capture: VideoCreditCapture | None = None,
+        ) -> VideoJob:
+            _ = user_id, thread_id, input_snapshot, retry_source_job_id, credit_capture
+            raise RetryAlreadyUsedError("retry already exists")
+
+    video_token = current_video_job_client.set(_RejectingVideoClient())
+    credit_token = current_credit_ledger_client.set(ledger)
+    try:
+        with pytest.raises(video_node_module.VideoNodePreflightError):
+            await video_node_module.video_node(
+                ProovyState(
+                    user_id="user-1",
+                    thread_id="thread-1",
+                    hold_id=str(hold_id),
+                    messages=[
+                        HumanMessage(
+                            content="이전 영상 다시 만들기",
+                            additional_kwargs={
+                                "action": "video_retry",
+                                "retry_source_job_id": "failed-job-1",
+                            },
+                        )
+                    ],
+                    plan=[PlanStep(action="video", description="영상", status="running")],
+                )
+            )
+    finally:
+        current_credit_ledger_client.reset(credit_token)
+        current_video_job_client.reset(video_token)
+
+    assert ledger.release_calls == [("user-1", hold_id)]
+
+
+@pytest.mark.asyncio
+async def test_video_retry_missing_source_rejects_without_extracting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hold_id = uuid4()
+    ledger = _FakeLedger()
+    client = _FakeVideoClient()
+
+    async def fail_extract_video_inputs(_messages: object) -> HintExtractionResult:
+        raise AssertionError("invalid retry should not become a fresh video request")
+
+    monkeypatch.setattr(video_node_module, "extract_video_inputs", fail_extract_video_inputs)
+    video_token = current_video_job_client.set(client)
+    credit_token = current_credit_ledger_client.set(ledger)
+    try:
+        with pytest.raises(video_node_module.VideoNodePreflightError):
+            await video_node_module.video_node(
+                ProovyState(
+                    user_id="user-1",
+                    thread_id="thread-1",
+                    hold_id=str(hold_id),
+                    messages=[
+                        HumanMessage(
+                            content="이전 영상 다시 만들기",
+                            additional_kwargs={"action": "video_retry"},
+                        )
+                    ],
+                    plan=[PlanStep(action="video", description="영상", status="running")],
+                )
+            )
+    finally:
+        current_credit_ledger_client.reset(credit_token)
+        current_video_job_client.reset(video_token)
+
+    assert client.create_calls == []
+    assert ledger.release_calls == [("user-1", hold_id)]

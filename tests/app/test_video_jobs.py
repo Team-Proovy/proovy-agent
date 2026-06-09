@@ -10,7 +10,7 @@ import pytest
 
 from proovy_agent.app import main
 from proovy_agent.features.video.jobs import CloudRunVideoJobClient, InMemoryVideoJobRepository
-from proovy_agent.features.video.models import VideoJob, VideoJobStatus
+from proovy_agent.features.video.models import VideoJob, VideoJobInput, VideoJobStatus
 
 
 class _FakeQueue:
@@ -84,10 +84,42 @@ def test_create_video_job_and_get_progress_round_trip(
         _FakeArtifactUrlResolver,
     ],
 ) -> None:
-    """API가 잡 ID를 반환하고 같은 ID로 진행률 조회가 가능하다."""
-    client, queue, _video_client, _artifact_url_resolver = video_api
+    """잡 진행률 조회 API가 DB job 상태를 반환한다."""
+    client, queue, video_client, _artifact_url_resolver = video_api
 
-    create_response = client.post(
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="2x + 1 = 7을 풀어라."),
+        )
+    )
+
+    assert [queued.id for queued in queue.enqueued] == [job.id]
+
+    progress_response = client.get(
+        f"/api/v1/video-jobs/{job.id}",
+        params={"user_id": "user-1"},
+    )
+
+    assert progress_response.status_code == 200
+    progress = progress_response.json()
+    assert progress["job_id"] == job.id
+    assert progress["status"] == "queued"
+    assert progress["progress"] == {}
+    assert progress["poll_after_seconds"] == 2
+    assert progress["can_user_retry"] is False
+    assert "artifact_object_key" not in progress
+    assert progress["user_diagnostic"] is None
+
+
+def test_create_video_job_endpoint_is_disabled(
+    video_api: tuple[TestClient, _FakeQueue, CloudRunVideoJobClient, _FakeArtifactUrlResolver],
+) -> None:
+    """영상 job 생성은 VideoNode capture 계약을 통해서만 허용한다."""
+    client, _queue, _video_client, _artifact_url_resolver = video_api
+
+    response = client.post(
         "/api/v1/video-jobs",
         json={
             "user_id": "user-1",
@@ -96,27 +128,7 @@ def test_create_video_job_and_get_progress_round_trip(
         },
     )
 
-    assert create_response.status_code == 202
-    created = create_response.json()
-    assert created["status"] == "queued"
-    assert created["progress_url"] == f"/api/v1/video-jobs/{created['job_id']}"
-    assert created["poll_after_seconds"] == 2
-    assert [job.id for job in queue.enqueued] == [created["job_id"]]
-
-    progress_response = client.get(
-        f"/api/v1/video-jobs/{created['job_id']}",
-        params={"user_id": "user-1"},
-    )
-
-    assert progress_response.status_code == 200
-    progress = progress_response.json()
-    assert progress["job_id"] == created["job_id"]
-    assert progress["status"] == "queued"
-    assert progress["progress"] == {}
-    assert progress["poll_after_seconds"] == 2
-    assert progress["can_user_retry"] is False
-    assert "artifact_object_key" not in progress
-    assert progress["user_diagnostic"] is None
+    assert response.status_code == 410
 
 
 def test_succeeded_progress_uses_signed_url_without_exposing_object_key(
@@ -129,15 +141,14 @@ def test_succeeded_progress_uses_signed_url_without_exposing_object_key(
 ) -> None:
     """성공 job은 signed URL만 노출하고 내부 object key는 숨긴다."""
     client, _queue, video_client, artifact_url_resolver = video_api
-    create_response = client.post(
-        "/api/v1/video-jobs",
-        json={
-            "user_id": "user-1",
-            "thread_id": "thread-1",
-            "input_snapshot": {"problem_text": "2x + 1 = 7을 풀어라."},
-        },
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="2x + 1 = 7을 풀어라."),
+        )
     )
-    job_id = create_response.json()["job_id"]
+    job_id = job.id
     object_key = f"video-jobs/{job_id}/attempts/attempt-1/final.mp4"
     artifact_url_resolver.urls[object_key] = "https://signed.example/video.mp4"
     asyncio.run(
@@ -171,15 +182,14 @@ def test_progress_still_returns_when_signed_url_resolver_fails(
 ) -> None:
     """Signed URL 생성 실패는 hot progress 조회를 500으로 만들지 않는다."""
     client, _queue, video_client, artifact_url_resolver = video_api
-    create_response = client.post(
-        "/api/v1/video-jobs",
-        json={
-            "user_id": "user-1",
-            "thread_id": "thread-1",
-            "input_snapshot": {"problem_text": "2x + 1 = 7을 풀어라."},
-        },
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="2x + 1 = 7을 풀어라."),
+        )
     )
-    job_id = create_response.json()["job_id"]
+    job_id = job.id
     object_key = f"video-jobs/{job_id}/attempts/attempt-1/final.mp4"
     artifact_url_resolver.should_fail = True
     asyncio.run(
@@ -211,17 +221,15 @@ def test_progress_lookup_is_user_scoped(
     ],
 ) -> None:
     """다른 user_id로는 job progress가 노출되지 않는다."""
-    client, _queue, _video_client, _artifact_url_resolver = video_api
-    create_response = client.post(
-        "/api/v1/video-jobs",
-        json={
-            "user_id": "user-1",
-            "thread_id": "thread-1",
-            "input_snapshot": {"problem_text": "1+1은?"},
-        },
+    client, _queue, video_client, _artifact_url_resolver = video_api
+    job = asyncio.run(
+        video_client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=VideoJobInput(problem_text="1+1은?"),
+        )
     )
-    job_id = create_response.json()["job_id"]
 
-    response = client.get(f"/api/v1/video-jobs/{job_id}", params={"user_id": "user-2"})
+    response = client.get(f"/api/v1/video-jobs/{job.id}", params={"user_id": "user-2"})
 
     assert response.status_code == 404

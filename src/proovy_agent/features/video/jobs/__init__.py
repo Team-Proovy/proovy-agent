@@ -6,7 +6,9 @@ from proovy_agent.features.video.jobs.artifacts import (
 )
 from proovy_agent.features.video.jobs.client import (
     CloudRunVideoJobClient,
+    CloudTasksVideoTaskQueue,
     NoopVideoTaskQueue,
+    VideoCreditCapture,
     VideoJobClient,
     VideoJobClientError,
     VideoJobEnqueueError,
@@ -29,6 +31,7 @@ from proovy_agent.features.video.jobs.user_diagnostic import build_user_diagnost
 
 __all__ = [
     "CloudRunVideoJobClient",
+    "CloudTasksVideoTaskQueue",
     "InMemoryVideoJobRepository",
     "InvalidRetrySourceError",
     "NoopVideoArtifactUrlResolver",
@@ -36,6 +39,7 @@ __all__ = [
     "PostgresVideoJobRepository",
     "RetryAlreadyUsedError",
     "VideoArtifactUrlResolver",
+    "VideoCreditCapture",
     "VideoJobClient",
     "VideoJobClientError",
     "VideoJobEnqueueError",

@@ -45,6 +45,7 @@ def test_token_payload_defaults_final_to_false() -> None:
     payload = TokenPayload(delta="안녕")
     assert payload.delta == "안녕"
     assert payload.final is False
+    assert payload.metadata == {}
 
 
 def test_done_payload_final_is_locked_true() -> None:
@@ -361,6 +362,29 @@ def test_to_stream_v2_token_maps_to_llm_token_delta() -> None:
     assert "id" not in frame
     data = json.loads(frame["data"])
     assert data == {"delta": "안녕", "thread_id": "th-1"}
+
+
+def test_to_stream_v2_token_includes_metadata_when_present() -> None:
+    """video anchor tokens can carry viewer metadata through stream/v2."""
+    frame = to_stream_v2(
+        TokenEvent(
+            thread_id="th-1",
+            seq=3,
+            payload=TokenPayload(
+                delta="영상 생성 중",
+                metadata={
+                    "display": "tool",
+                    "job_id": "job-1",
+                    "click_action": "open_video_viewer",
+                },
+            ),
+        )
+    )
+
+    assert frame is not None
+    data = json.loads(frame["data"])
+    assert data["metadata"]["job_id"] == "job-1"
+    assert data["metadata"]["click_action"] == "open_video_viewer"
 
 
 def test_to_stream_v2_done_maps_to_run_completed() -> None:

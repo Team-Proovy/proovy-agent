@@ -1,13 +1,21 @@
 """Video job client and repository tests."""
 
+from decimal import Decimal
+import json
+from uuid import uuid4
+
+from google.api_core.exceptions import AlreadyExists, NotFound
 from pydantic import ValidationError
 import pytest
 
 from proovy_agent.features.video.jobs import (
     CloudRunVideoJobClient,
+    CloudTasksVideoTaskQueue,
     InMemoryVideoJobRepository,
     InvalidRetrySourceError,
     RetryAlreadyUsedError,
+    VideoCreditCapture,
+    VideoJobEnqueueError,
 )
 from proovy_agent.features.video.models import (
     StageName,
@@ -19,11 +27,14 @@ from proovy_agent.features.video.models import (
 
 
 class _FakeQueue:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
         self.enqueued: list[VideoJob] = []
         self.deleted: list[str] = []
 
     async def enqueue(self, job: VideoJob) -> None:
+        if self.events is not None:
+            self.events.append("enqueue")
         self.enqueued.append(job)
 
     async def delete(self, cloud_tasks_name: str) -> None:
@@ -34,6 +45,66 @@ class _FailingDeleteQueue(_FakeQueue):
     async def delete(self, cloud_tasks_name: str) -> None:
         self.deleted.append(cloud_tasks_name)
         raise RuntimeError("delete failed")
+
+
+class _FailingEnqueueQueue(_FakeQueue):
+    async def enqueue(self, job: VideoJob) -> None:
+        self.enqueued.append(job)
+        raise RuntimeError("enqueue failed")
+
+
+class _FakeCloudTasksClient:
+    def __init__(self) -> None:
+        self.created: list[tuple[str, object]] = []
+        self.deleted: list[str] = []
+        self.loaded: list[str] = []
+        self.create_error: Exception | None = None
+        self.delete_error: Exception | None = None
+        self.get_error: Exception | None = None
+
+    def create_task(self, *, parent: str, task: object) -> None:
+        if self.create_error is not None:
+            raise self.create_error
+        self.created.append((parent, task))
+
+    def get_task(self, *, name: str) -> object:
+        self.loaded.append(name)
+        if self.get_error is not None:
+            raise self.get_error
+        return object()
+
+    def delete_task(self, *, name: str) -> None:
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.deleted.append(name)
+
+
+class _RecordingRepository(InMemoryVideoJobRepository):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+
+    async def create(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        input_snapshot: VideoJobInput | None = None,
+        retry_source_job_id: str | None = None,
+        job_id: str | None = None,
+        credit_capture: VideoCreditCapture | None = None,
+    ) -> VideoJob:
+        job = await super().create(
+            user_id=user_id,
+            thread_id=thread_id,
+            input_snapshot=input_snapshot,
+            retry_source_job_id=retry_source_job_id,
+            job_id=job_id,
+            credit_capture=credit_capture,
+        )
+        if credit_capture is not None:
+            self.events.append("capture")
+        return job
 
 
 def _sample_input() -> VideoJobInput:
@@ -68,6 +139,138 @@ async def test_video_job_create_and_progress_round_trip() -> None:
     assert updated.progress == {"segments_done": 1, "segments_total": 3}
     assert updated.started_at is not None
     assert [queued.id for queued in queue.enqueued] == [job.id]
+
+
+async def test_credit_capture_contract_happens_before_queue_enqueue() -> None:
+    """Video 10cr capture is part of repository create before task dispatch."""
+    events: list[str] = []
+    client = CloudRunVideoJobClient(_RecordingRepository(events), _FakeQueue(events))
+    hold_id = uuid4()
+
+    job = await client.create_and_enqueue(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        credit_capture=VideoCreditCapture(hold_id=hold_id, amount=Decimal("10")),
+    )
+
+    assert job.cloud_tasks_name == f"video-{job.id}"
+    assert events == ["capture", "enqueue"]
+
+
+async def test_enqueue_failure_marks_unleased_job_failed_and_refunded() -> None:
+    """A confirmed enqueue miss compensates a pre-dispatch video capture."""
+    repository = InMemoryVideoJobRepository()
+    client = CloudRunVideoJobClient(repository, _FailingEnqueueQueue())
+
+    with pytest.raises(VideoJobEnqueueError) as exc_info:
+        await client.create_and_enqueue(
+            user_id="user-1",
+            thread_id="thread-1",
+            input_snapshot=_sample_input(),
+            credit_capture=VideoCreditCapture(hold_id=uuid4(), amount=Decimal("10")),
+        )
+
+    job = await repository.get(exc_info.value.job_id)
+    assert job is not None
+    assert job.status is VideoJobStatus.FAILED
+    assert job.error_stage is StageName.ENQUEUE
+    assert job.user_error_code is UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED
+    assert job.refund_applied_at is not None
+
+
+async def test_cloud_tasks_queue_creates_named_http_task() -> None:
+    """Cloud Tasks adapter sends deterministic task id and worker auth header."""
+    cloud_tasks_client = _FakeCloudTasksClient()
+    queue = CloudTasksVideoTaskQueue(
+        queue_path="projects/p/locations/us-central1/queues/video",
+        worker_url="https://worker.example/jobs/run",
+        worker_auth_token="secret",
+        client=cloud_tasks_client,  # type: ignore[arg-type]
+    )
+    job = await InMemoryVideoJobRepository().create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        job_id="job-1",
+    )
+
+    await queue.enqueue(job)
+
+    parent, task = cloud_tasks_client.created[0]
+    assert parent == "projects/p/locations/us-central1/queues/video"
+    assert task.name == "projects/p/locations/us-central1/queues/video/tasks/video-job-1"
+    assert task.http_request.url == "https://worker.example/jobs/run"
+    assert task.http_request.headers["X-Proovy-Worker-Token"] == "secret"
+    assert json.loads(task.http_request.body.decode("utf-8")) == {"job_id": "job-1"}
+
+
+async def test_cloud_tasks_queue_treats_already_exists_and_not_found_as_idempotent() -> None:
+    """Task create/delete retries are idempotent for deterministic task names."""
+    cloud_tasks_client = _FakeCloudTasksClient()
+    queue = CloudTasksVideoTaskQueue(
+        queue_path="projects/p/locations/us-central1/queues/video",
+        worker_url="https://worker.example/jobs/run",
+        client=cloud_tasks_client,  # type: ignore[arg-type]
+    )
+    job = await InMemoryVideoJobRepository().create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        job_id="job-1",
+    )
+
+    cloud_tasks_client.create_error = AlreadyExists("exists")
+    cloud_tasks_client.delete_error = NotFound("missing")
+
+    await queue.enqueue(job)
+    await queue.delete(job.cloud_tasks_name)
+
+
+async def test_cloud_tasks_queue_reconciles_ambiguous_create_errors() -> None:
+    """create_task 실패가 모호하면 get_task로 확인해 불필요한 환불을 막는다."""
+    cloud_tasks_client = _FakeCloudTasksClient()
+    queue = CloudTasksVideoTaskQueue(
+        queue_path="projects/p/locations/us-central1/queues/video",
+        worker_url="https://worker.example/jobs/run",
+        client=cloud_tasks_client,  # type: ignore[arg-type]
+    )
+    job = await InMemoryVideoJobRepository().create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        job_id="job-1",
+    )
+
+    cloud_tasks_client.create_error = RuntimeError("deadline exceeded")
+
+    await queue.enqueue(job)
+
+    assert cloud_tasks_client.loaded == [
+        "projects/p/locations/us-central1/queues/video/tasks/video-job-1"
+    ]
+
+
+async def test_cloud_tasks_queue_raises_only_when_task_absence_confirmed() -> None:
+    """get_task NOT_FOUND일 때만 enqueue 실패를 확정한다."""
+    cloud_tasks_client = _FakeCloudTasksClient()
+    queue = CloudTasksVideoTaskQueue(
+        queue_path="projects/p/locations/us-central1/queues/video",
+        worker_url="https://worker.example/jobs/run",
+        client=cloud_tasks_client,  # type: ignore[arg-type]
+    )
+    job = await InMemoryVideoJobRepository().create(
+        user_id="user-1",
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        job_id="job-1",
+    )
+
+    cloud_tasks_client.create_error = RuntimeError("deadline exceeded")
+    cloud_tasks_client.get_error = NotFound("missing")
+
+    with pytest.raises(RuntimeError, match="deadline exceeded"):
+        await queue.enqueue(job)
 
 
 async def test_retry_source_allows_only_one_user_retry() -> None:
