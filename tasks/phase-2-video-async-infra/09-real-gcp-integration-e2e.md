@@ -48,11 +48,17 @@ sprint: ""
 - [ ] 2.05 완료 보고에서 확인된 항목: render sandbox는 root runtime 또는 Landlock
       미지원 런타임에서 실패하도록 fail-closed 처리한다. Cloud Run gen2 worker 이미지와
       startup smoke에서 non-root, Landlock, 크기제한 workspace volume, secret/env 미전달을 검증한다.
+- [ ] 2.06 완료 보고에서 확인된 항목: API runtime에는 `DATABASE_URL`,
+      `VIDEO_CLOUD_TASKS_QUEUE_PATH`, `VIDEO_WORKER_URL`, `VIDEO_WORKER_AUTH_TOKEN`을
+      함께 설정해야 한다. 실제 Cloud Tasks task name(`video-{job_id}`), worker header
+      전달, createTask 실패 후 getTask reconciliation, enqueue 실패 환불 경로를 실제
+      GCP 리소스로 검증한다.
 
 ## 구현 체크리스트
 
 - [ ] GCS uploader/resolver가 최종 mp4 object key를 기록하고 status API가 결과 URL을 반환한다.
 - [ ] Cloud Tasks `createTask`가 실제 queue에 task를 만들고 Cloud Run worker `/jobs/run`으로 dispatch한다.
+- [ ] `createTask` 실패가 발생하면 `getTask` 확인 결과에 따라 `NOT_FOUND` 확정 시에만 failed+refund되고, 확인 모호/존재 확인 시에는 lazy detection 대상으로 남는지 검증한다.
 - [ ] Cloud Tasks → Cloud Run worker 인증을 실제 설정으로 검증한다 (OIDC 권장, token 방식이면 header/secret 일치 검증).
 - [ ] 샘플 문제 1건이 solve → video job create/capture → enqueue → worker render → GCS mp4 upload → 결과 표시까지 통과한다.
 - [ ] worker health check가 실제 이미지/서비스에서 manim, TeX, CJK 폰트, ffmpeg 존재를 검증한다.

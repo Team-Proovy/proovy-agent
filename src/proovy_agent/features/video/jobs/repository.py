@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from proovy_agent.common.checkpoint.saver import _to_libpq
+from proovy_agent.features.credits.ledger import CreditLedger
 from proovy_agent.features.video.models import (
     StageName,
     UserErrorCode,
@@ -26,6 +27,9 @@ from proovy_agent.features.video.models import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
+
+    from proovy_agent.features.credits.models import CreditAmount
+    from proovy_agent.features.video.jobs.client import VideoCreditCapture
 
 TERMINAL_JOB_STATUSES = {
     VideoJobStatus.SUCCEEDED,
@@ -96,6 +100,7 @@ class VideoJobRepository(Protocol):
         input_snapshot: VideoJobInput | None = None,
         retry_source_job_id: str | None = None,
         job_id: str | None = None,
+        credit_capture: VideoCreditCapture | None = None,
     ) -> VideoJob:
         """Create a queued job, copying source input for user retry requests."""
 
@@ -155,6 +160,15 @@ class VideoJobRepository(Protocol):
     ) -> VideoJob:
         """Mark a job as terminal."""
 
+    async def mark_enqueue_failed(
+        self,
+        job_id: str,
+        *,
+        error_detail: str | None = None,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        """Mark an unleased queued job failed after a confirmed enqueue miss."""
+
     async def finalize_for_lease(
         self,
         job_id: str,
@@ -188,7 +202,9 @@ class InMemoryVideoJobRepository:
         input_snapshot: VideoJobInput | None = None,
         retry_source_job_id: str | None = None,
         job_id: str | None = None,
+        credit_capture: VideoCreditCapture | None = None,
     ) -> VideoJob:
+        _ = credit_capture
         async with self._lock:
             source_job: VideoJob | None = None
             if retry_source_job_id is not None:
@@ -388,6 +404,34 @@ class InMemoryVideoJobRepository:
             self._jobs[job_id] = _copy_job(updated)
             return _copy_job(updated)
 
+    async def mark_enqueue_failed(
+        self,
+        job_id: str,
+        *,
+        error_detail: str | None = None,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        async with self._lock:
+            job = self._require_job_locked(job_id)
+            if job.status in TERMINAL_JOB_STATUSES:
+                return _copy_job(job)
+            if job.status is not VideoJobStatus.QUEUED or job.lease_holder_instance_id is not None:
+                return _copy_job(job)
+
+            update: dict[str, object] = {
+                "status": VideoJobStatus.FAILED,
+                "error_stage": StageName.ENQUEUE,
+                "user_error_code": UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED,
+                "error_detail": error_detail,
+                "progress_updated_at": now_utc(),
+                "finished_at": now_utc(),
+            }
+            if refund_amount is not None:
+                update["refund_applied_at"] = now_utc()
+            updated = _validated_job_update(job, update)
+            self._jobs[job_id] = _copy_job(updated)
+            return _copy_job(updated)
+
     async def finalize_for_lease(
         self,
         job_id: str,
@@ -482,6 +526,7 @@ class PostgresVideoJobRepository:
         input_snapshot: VideoJobInput | None = None,
         retry_source_job_id: str | None = None,
         job_id: str | None = None,
+        credit_capture: VideoCreditCapture | None = None,
     ) -> VideoJob:
         async with await self._connect() as conn, conn.transaction():
             if retry_source_job_id is not None:
@@ -543,6 +588,12 @@ class PostgresVideoJobRepository:
             row = await cur.fetchone()
             if row is None:
                 raise VideoJobStoreError("video job insert returned no row")
+            if credit_capture is not None:
+                await CreditLedger(conn).capture(
+                    user_id,
+                    credit_capture.hold_id,
+                    credit_capture.amount,
+                )
             return _row_to_job(row)
 
     async def get(self, job_id: str) -> VideoJob | None:
@@ -825,6 +876,56 @@ class PostgresVideoJobRepository:
                 raise VideoJobNotFoundError(job_id)
             return _row_to_job(row)
 
+    async def mark_enqueue_failed(
+        self,
+        job_id: str,
+        *,
+        error_detail: str | None = None,
+        refund_amount: CreditAmount | None = None,
+    ) -> VideoJob:
+        async with await self._connect() as conn, conn.transaction():
+            cur = await conn.execute(
+                """
+                UPDATE video_jobs
+                SET status = %(status)s,
+                    lease_holder_instance_id = NULL,
+                    error_stage = %(error_stage)s,
+                    user_error_code = %(user_error_code)s,
+                    error_detail = %(error_detail)s,
+                    progress_updated_at = %(progress_updated_at)s,
+                    finished_at = %(finished_at)s
+                WHERE id = %(id)s
+                  AND status = 'queued'
+                  AND lease_holder_instance_id IS NULL
+                RETURNING *
+                """,
+                {
+                    "id": job_id,
+                    "status": VideoJobStatus.FAILED.value,
+                    "error_stage": StageName.ENQUEUE.value,
+                    "user_error_code": UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED.value,
+                    "error_detail": error_detail,
+                    "progress_updated_at": now_utc(),
+                    "finished_at": now_utc(),
+                },
+            )
+            row = await cur.fetchone()
+            if row is None:
+                refreshed_cur = await conn.execute(
+                    "SELECT * FROM video_jobs WHERE id = %s", (job_id,)
+                )
+                refreshed_row = await refreshed_cur.fetchone()
+                if refreshed_row is None:
+                    raise VideoJobNotFoundError(job_id)
+                return _row_to_job(refreshed_row)
+            if refund_amount is not None:
+                await CreditLedger(conn).refund_if_not_succeeded(job_id, refund_amount)
+                refreshed = await self._select_for_update(conn, job_id)
+                if refreshed is None:
+                    raise VideoJobNotFoundError(job_id)
+                return refreshed
+            return _row_to_job(row)
+
     async def finalize_for_lease(
         self,
         job_id: str,
@@ -985,4 +1086,5 @@ def _row_to_job(row: Mapping[str, Any]) -> VideoJob:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+        refund_applied_at=row.get("refund_applied_at"),
     )

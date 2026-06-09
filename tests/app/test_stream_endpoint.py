@@ -145,6 +145,27 @@ def test_stream_v2_maps_tokens_and_completes(client: TestClient) -> None:
     assert all(f["data"].get("thread_id") == "th-1" for f in frames)
 
 
+def test_stream_v2_preserves_token_metadata(client: TestClient) -> None:
+    """영상 anchor token metadata는 backend stream에서도 보존된다."""
+    frames = _post_stream(
+        client,
+        [
+            TokenPayload(
+                delta="영상 생성 중",
+                metadata={
+                    "display": "tool",
+                    "job_id": "job-1",
+                    "click_action": "open_video_viewer",
+                },
+            )
+        ],
+    )
+
+    assert frames[0]["event"] == "llm.token.delta"
+    assert frames[0]["data"]["metadata"]["job_id"] == "job-1"
+    assert frames[0]["data"]["metadata"]["click_action"] == "open_video_viewer"
+
+
 def test_stream_v2_drops_internal_only_events(client: TestClient) -> None:
     """page_start 등 백엔드가 소비 안 하는 내부 이벤트는 스트림에서 drop된다."""
     frames = _post_stream(

@@ -118,6 +118,7 @@ class NodeResultPayload(BaseModel):
 class TokenPayload(BaseModel):
     delta: str
     final: bool = False
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 # Tool & Media ──────────────────────────────────────────────────────────────
@@ -257,6 +258,8 @@ def to_stream_v2(event: SSEEvent) -> dict[str, str] | None:
     if isinstance(event, TokenEvent):
         name = "llm.token.delta"
         data = {"delta": event.payload.delta, "thread_id": event.thread_id}
+        if event.payload.metadata:
+            data["metadata"] = event.payload.metadata
     elif isinstance(event, DoneEvent):
         name = "run.completed"
         data = {"thread_id": event.thread_id}

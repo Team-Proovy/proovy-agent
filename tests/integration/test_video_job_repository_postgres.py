@@ -5,6 +5,7 @@ DATABASE_URL 미설정 시 skip — docker-compose.test.yml의 postgres 서비�
     docker compose -f docker-compose.test.yml run --rm test-pg
 """
 
+from decimal import Decimal
 import os
 import uuid
 
@@ -12,14 +13,19 @@ from psycopg import AsyncConnection
 import pytest
 
 from proovy_agent.common.checkpoint.saver import _to_libpq
+from proovy_agent.features.credits import CreditHold, CreditLedger, setup_credit_ledger
 from proovy_agent.features.video.jobs import (
+    CloudRunVideoJobClient,
     PostgresVideoJobRepository,
     RetryAlreadyUsedError,
+    VideoCreditCapture,
+    VideoJobEnqueueError,
     VideoJobStoreError,
 )
 from proovy_agent.features.video.models import (
     StageName,
     UserErrorCode,
+    VideoJob,
     VideoJobInput,
     VideoJobStatus,
 )
@@ -51,7 +57,8 @@ _VIDEO_JOBS_DDL = [
         cancel_requested boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL,
         started_at timestamptz NULL,
-        finished_at timestamptz NULL
+        finished_at timestamptz NULL,
+        refund_applied_at timestamptz NULL
     )
     """,
     """
@@ -60,6 +67,15 @@ _VIDEO_JOBS_DDL = [
     WHERE retry_source_job_id IS NOT NULL
     """,
 ]
+
+
+class _FailingQueue:
+    async def enqueue(self, job: VideoJob) -> None:
+        _ = job
+        raise RuntimeError("enqueue failed")
+
+    async def delete(self, cloud_tasks_name: str) -> None:
+        _ = cloud_tasks_name
 
 
 @pytest.fixture
@@ -82,6 +98,19 @@ async def repository(database_url: str) -> PostgresVideoJobRepository:
 
 def _sample_input() -> VideoJobInput:
     return VideoJobInput(problem_text="2x + 1 = 7을 풀어라.")
+
+
+async def _create_credit_hold(
+    database_url: str,
+    *,
+    user_id: str,
+    amount: Decimal = Decimal("20"),
+) -> CreditHold:
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        await setup_credit_ledger(conn)
+        ledger = CreditLedger(conn)
+        await ledger.upsert_account(user_id, Decimal("100"))
+        return await ledger.hold(user_id, amount, plan_id=f"plan-{uuid.uuid4()}")
 
 
 async def test_postgres_video_job_round_trip_and_retry_limit(
@@ -121,6 +150,61 @@ async def test_postgres_video_job_round_trip_and_retry_limit(
             thread_id=thread_id,
             retry_source_job_id=source.id,
         )
+
+
+async def test_postgres_create_with_credit_capture_updates_balance_and_hold(
+    database_url: str,
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """Postgres create(..., credit_capture=...) performs DB insert + capture atomically."""
+    user_id = f"user-{uuid.uuid4()}"
+    hold = await _create_credit_hold(database_url, user_id=user_id)
+
+    job = await repository.create(
+        user_id=user_id,
+        thread_id="thread-1",
+        input_snapshot=_sample_input(),
+        credit_capture=VideoCreditCapture(hold_id=hold.id, amount=Decimal("10")),
+    )
+
+    loaded = await repository.get(job.id)
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        balance = await CreditLedger(conn).get_balance(user_id)
+
+    assert loaded == job
+    assert balance.balance == Decimal("90")
+    assert balance.active_hold_amount == Decimal("10")
+    assert balance.available == Decimal("80")
+
+
+async def test_postgres_enqueue_failure_refunds_captured_video_credit(
+    database_url: str,
+    repository: PostgresVideoJobRepository,
+) -> None:
+    """Confirmed enqueue failure marks queued job failed and refunds the video capture."""
+    user_id = f"user-{uuid.uuid4()}"
+    hold = await _create_credit_hold(database_url, user_id=user_id)
+    client = CloudRunVideoJobClient(repository, _FailingQueue())
+
+    with pytest.raises(VideoJobEnqueueError) as exc_info:
+        await client.create_and_enqueue(
+            user_id=user_id,
+            thread_id="thread-1",
+            input_snapshot=_sample_input(),
+            credit_capture=VideoCreditCapture(hold_id=hold.id, amount=Decimal("10")),
+        )
+
+    job = await repository.get(exc_info.value.job_id)
+    async with await AsyncConnection.connect(_to_libpq(database_url)) as conn:
+        balance = await CreditLedger(conn).get_balance(user_id)
+
+    assert job is not None
+    assert job.status is VideoJobStatus.FAILED
+    assert job.error_stage is StageName.ENQUEUE
+    assert job.user_error_code is UserErrorCode.INFRASTRUCTURE_ENQUEUE_FAILED
+    assert job.refund_applied_at is not None
+    assert balance.balance == Decimal("100")
+    assert balance.active_hold_amount == Decimal("10")
 
 
 async def test_postgres_unique_violations_are_not_all_retry_errors(

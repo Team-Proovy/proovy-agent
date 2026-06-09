@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     video_job_heartbeat_interval_seconds: float = Field(default=60.0, gt=0)
     video_cancel_poll_interval_seconds: float = Field(default=10.0, gt=0)
     video_job_max_runtime_seconds: float = Field(default=1200.0, gt=0)
+    video_cloud_tasks_queue_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("VIDEO_CLOUD_TASKS_QUEUE_PATH", "VIDEO_CLOUD_TASKS_QUEUE"),
+    )
+    video_worker_url: str = Field(default="", validation_alias="VIDEO_WORKER_URL")
+    video_cloud_tasks_oidc_service_account_email: str = Field(
+        default="",
+        validation_alias="VIDEO_CLOUD_TASKS_OIDC_SERVICE_ACCOUNT_EMAIL",
+    )
     video_worker_instance_id: str = Field(default="", validation_alias="VIDEO_WORKER_INSTANCE_ID")
     video_worker_auth_token: str = Field(default="", validation_alias="VIDEO_WORKER_AUTH_TOKEN")
     video_render_workspace_root: str = Field(

@@ -271,6 +271,7 @@ class VideoJob(_VideoBaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    refund_applied_at: datetime | None = None
 
     @field_validator("id", "user_id", "thread_id", "problem_hash", "cloud_tasks_name")
     @classmethod

@@ -6,16 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from proovy_agent.app.schemas.video_jobs import (
     CreateVideoJobRequest,
-    CreateVideoJobResponse,
     VideoJobProgressResponse,
 )
 from proovy_agent.features.video.jobs import (
-    InvalidRetrySourceError,
     NoopVideoArtifactUrlResolver,
-    RetryAlreadyUsedError,
     VideoArtifactUrlResolver,
     VideoJobClient,
-    VideoJobEnqueueError,
     build_user_diagnostic,
 )
 from proovy_agent.features.video.models import VideoJob, VideoJobStatus
@@ -56,32 +52,15 @@ async def _resolve_final_video_url(
 
 @router.post(
     "",
-    response_model=CreateVideoJobResponse,
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_410_GONE,
 )
 async def create_video_job(
-    payload: CreateVideoJobRequest,
-    client: VideoJobClient = Depends(get_video_job_client),
-) -> CreateVideoJobResponse:
-    """Create a queued video job and return its progress handle."""
-    try:
-        job = await client.create_and_enqueue(
-            user_id=payload.user_id,
-            thread_id=payload.thread_id,
-            input_snapshot=payload.input_snapshot,
-            retry_source_job_id=payload.retry_source_job_id,
-        )
-    except RetryAlreadyUsedError as exc:
-        raise HTTPException(status_code=409, detail="retry already used") from exc
-    except InvalidRetrySourceError as exc:
-        raise HTTPException(status_code=400, detail="invalid retry source") from exc
-    except VideoJobEnqueueError as exc:
-        raise HTTPException(status_code=503, detail="video job enqueue failed") from exc
-
-    return CreateVideoJobResponse(
-        job_id=job.id,
-        status=job.status,
-        progress_url=f"/api/v1/video-jobs/{job.id}",
+    _payload: CreateVideoJobRequest,
+) -> None:
+    """Reject direct job creation; VideoNode owns create/capture/enqueue."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="video jobs must be created by VideoNode",
     )
 
 
