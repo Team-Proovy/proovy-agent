@@ -31,6 +31,13 @@ def test_pdf_waits_for_solve() -> None:
     assert _find_ready_steps(plan)[0][1].action == "solve"
 
 
+def test_video_waits_for_solve() -> None:
+    plan = [_step("solve"), _step("video")]
+    ready = _find_ready_steps(plan)
+    assert len(ready) == 1
+    assert ready[0][1].action == "solve"
+
+
 def test_pdf_ready_after_solve_done() -> None:
     plan = [_step("solve", "done"), _step("pdf")]
     ready = _find_ready_steps(plan)

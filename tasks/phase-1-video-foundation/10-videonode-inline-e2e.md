@@ -7,7 +7,8 @@ issue: "82"
 depends_on: ["1.02", "1.03", "1.05", "1.07", "1.08", "1.09"]
 blocks: ["2.06"]
 estimate: "M"
-status: "todo"
+status: "done"
+completed_at: 2026-06-09
 owner: ""
 sprint: ""
 ---
@@ -27,19 +28,19 @@ sprint: ""
 
 ## 사전 준비
 
-- [ ] dev 머신에 manim / TeX Live / CJK 폰트 (inline은 메인 프로세스 import)
-- [ ] `VIDEO_SANDBOX_BACKEND=none` E2E 설정
+- [x] dev 머신에 manim / TeX Live / CJK 폰트 (inline은 메인 프로세스 import)
+- [x] `VIDEO_SANDBOX_BACKEND=none` E2E 설정
 
 ## 구현 체크리스트
 
-- [ ] `graph/nodes/video.py` 임시 inline 스캐폴드 (`inline_runner.run_now`, blocking 허용 — throwaway)
-- [ ] `graph/builder.py`: Planner video plan_step 인식 + PlanExecutor dispatch (`_DEPENDS_ON_SOLVE` 게이트)
-- [ ] 샘플 문제 1건 E2E 스모크 — 실제 mp4 생성과 결과 표시 (실제 GCS 연결 검증은 2.09에서 수행)
+- [x] `graph/nodes/video.py` 임시 inline 스캐폴드 (`inline_runner.run_now`, blocking 허용 — throwaway)
+- [x] `graph/builder.py`: Planner video plan_step 인식 + PlanExecutor dispatch (`_DEPENDS_ON_SOLVE` 게이트)
+- [x] 샘플 문제 1건 E2E 스모크 — inline mp4 생성 + 로컬 artifact 결과 표시 (실제 GCS 연결 검증은 2.09에서 수행)
 
 ## Definition of Done
 
-- [ ] 샘플 1건이 mp4까지 생성 + 결과 표시 (inline blocking 허용)
-- [ ] E2E 스모크 통과
+- [x] 샘플 1건이 mp4까지 생성 + 결과 표시 (inline blocking 허용)
+- [x] E2E 스모크 통과
 
 ## 리스크 / 메모
 
