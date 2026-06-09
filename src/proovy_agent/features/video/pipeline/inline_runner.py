@@ -125,12 +125,13 @@ class PhaseAInlineRunner:
             scene_class_name = template.get("scene_class_name")
             if not isinstance(source, str) or not isinstance(scene_class_name, str):
                 continue
+            safe_segment_id = _safe_path_part(segment.segment_id)
             segment_paths.append(
                 await self._render_template_segment(
                     manim_bin,
                     source,
                     scene_class_name,
-                    workspace=workspace / "segments" / f"{index:03d}-{segment.segment_id}",
+                    workspace=workspace / "segments" / f"{index:03d}-{safe_segment_id}",
                 )
             )
 
@@ -236,11 +237,12 @@ class LocalInlineArtifactUploader:
         if not await asyncio.to_thread(source.exists):
             raise PhaseAInlineRenderError(f"final mp4 does not exist: {source}")
         artifact_root = self._artifact_root or Path.cwd() / "uploads" / "video-inline"
-        destination = artifact_root / _safe_path_part(job_id) / "final.mp4"
+        safe_job_id = _safe_path_part(job_id)
+        destination = artifact_root / safe_job_id / "final.mp4"
         await asyncio.to_thread(destination.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(shutil.copyfile, source, destination)
         return InlineVideoArtifact(
-            object_key=f"inline-video-jobs/{job_id}/final.mp4",
+            object_key=f"inline-video-jobs/{safe_job_id}/final.mp4",
             url=destination.resolve().as_uri(),
         )
 

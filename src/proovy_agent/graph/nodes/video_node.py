@@ -53,7 +53,7 @@ def _video_options() -> VideoOptions:
 
 def _mark_current_step(plan: list, status: str, step_idx: int) -> list:
     updated = [s.model_copy() for s in plan]
-    if updated and step_idx < len(updated):
+    if updated and 0 <= step_idx < len(updated):
         updated[step_idx] = updated[step_idx].model_copy(update={"status": status})
     return updated
 

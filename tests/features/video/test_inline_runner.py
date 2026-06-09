@@ -127,15 +127,59 @@ async def test_local_inline_artifact_uploader_copies_mp4_and_returns_file_url(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.mp4"
-    source.write_bytes(b"mp4")
+    await asyncio.to_thread(source.write_bytes, b"mp4")
     uploader = LocalInlineArtifactUploader(artifact_root=tmp_path / "artifacts")
 
-    artifact = await uploader.upload_final_video(job_id="job-1", output_path=str(source))
+    artifact = await uploader.upload_final_video(job_id="../job 1", output_path=str(source))
 
     uploaded = tmp_path / "artifacts" / "job-1" / "final.mp4"
-    assert uploaded.read_bytes() == b"mp4"
+    assert await asyncio.to_thread(uploaded.read_bytes) == b"mp4"
     assert artifact.object_key == "inline-video-jobs/job-1/final.mp4"
     assert artifact.url == uploaded.resolve().as_uri()
+
+
+@pytest.mark.asyncio
+async def test_phase_a_inline_runner_sanitizes_segment_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "final.mp4"
+    result = _pipeline_result("job-1", output_path)
+    result.rendered_segments[0].segment_id = "../escape/seg"
+    observed_workspaces: list[Path] = []
+
+    async def fake_run_job(
+        job: VideoPipelineJob,
+        *,
+        ctx: object,
+    ) -> VideoPipelineResult:
+        _ = ctx
+        assert job.job_id == "job-1"
+        return result
+
+    async def fake_render_template_segment(
+        _manim_bin: str,
+        _manim_source: str,
+        _scene_class_name: str,
+        *,
+        workspace: Path,
+    ) -> Path:
+        observed_workspaces.append(workspace)
+        segment_path = workspace / "rendered.mp4"
+        await asyncio.to_thread(segment_path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(segment_path.write_bytes, b"mp4")
+        return segment_path
+
+    monkeypatch.setattr(inline_runner_module, "run_job", fake_run_job)
+    monkeypatch.setattr(inline_runner_module.shutil, "which", lambda _name: "/usr/bin/manim")
+    runner = PhaseAInlineRunner(workspace_root=tmp_path / "workspace")
+    monkeypatch.setattr(runner, "_render_template_segment", fake_render_template_segment)
+
+    await runner.run_now(_job())
+
+    expected = tmp_path / "workspace" / "job-1" / "segments" / "001-escape-seg"
+    assert observed_workspaces == [expected]
+    assert await asyncio.to_thread(output_path.read_bytes) == b"mp4"
 
 
 def test_phase_a_inline_smoke_renders_mp4_and_uploads_when_stack_available(

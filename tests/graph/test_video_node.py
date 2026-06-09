@@ -133,13 +133,24 @@ class _FakeUploader:
         )
 
 
+def test_mark_current_step_ignores_negative_index() -> None:
+    plan = [
+        PlanStep(action="solve", description="풀이", status="done"),
+        PlanStep(action="video", description="영상", status="pending"),
+    ]
+
+    result = video_node_module._mark_current_step(plan, "done", -1)
+
+    assert [step.status for step in result] == ["done", "pending"]
+
+
 @pytest.mark.asyncio
 async def test_video_node_runs_inline_runner_uploads_mp4_and_displays_result(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     output_path = tmp_path / "final.mp4"
-    output_path.write_bytes(b"fake mp4 bytes")
+    await asyncio.to_thread(output_path.write_bytes, b"fake mp4 bytes")
     runner = _FakeRunner(output_path)
     uploader = _FakeUploader()
 
