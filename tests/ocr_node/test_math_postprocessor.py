@@ -123,6 +123,26 @@ class TestBasicMathSymbols:
             assert len(results) == 1
             assert _expected_latex in results[0].latex
 
+    def test_fractions_with_spaces(self, processor: MathPostProcessor) -> None:
+        """`/` 주변 공백이 있는 분수도 감지·변환된다 (감지/변환 패턴 정합)."""
+        for original in ["a / b", "x / 2", "(x+1) / (y-1)"]:
+            results = processor.process_text(original)
+            assert len(results) == 1
+            assert "\\frac" in results[0].latex
+
+    def test_subscript_ignores_plain_identifiers(self, processor: MathPostProcessor) -> None:
+        """user_id·total_count 같은 다중 문자 식별자는 밑수로 변환하지 않는다."""
+        for identifier in ["user_id 값을 확인", "total_count = 5", "max_value"]:
+            results = processor.process_text(identifier)
+            assert all("_{" not in result.latex for result in results)
+
+    def test_subscript_single_letter_variable(self, processor: MathPostProcessor) -> None:
+        """단일 문자 변수 밑수(x_i, F_n)는 정상 변환한다."""
+        for original, expected in [("x_i", "x_{i}"), ("F_n", "F_{n}")]:
+            results = processor.process_text(original)
+            assert len(results) == 1
+            assert expected in results[0].latex
+
 
 class TestAdvancedMathSymbols:
     """고급 수학 기호 테스트."""

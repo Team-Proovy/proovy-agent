@@ -25,6 +25,42 @@ class MathPostProcessor:
         """수학 후처리기 초기화."""
         self.patterns = self._initialize_patterns()
         self.korean_math_terms = self._initialize_korean_terms()
+        self._known_commands = self._collect_known_commands()
+        # Phase B: 명령어 뒤가 비-문자 피연산자(숫자·`(`·`^`·`_`)면 공백 삽입.
+        # 뒤가 `{`/`[`/공백/기호면 그대로 두어 `\frac{...}`·`\sqrt[3]{...}`를 보존한다.
+        # 문자 피연산자(`\intf`→`\int f`)는 Phase A(_space_glued_commands)가 처리한다.
+        alternation = "|".join(sorted(self._known_commands, key=len, reverse=True))
+        self._command_operand_re = re.compile(rf"(\\(?:{alternation}))(?=[0-9(^_])")
+
+    def _collect_known_commands(self) -> set[str]:
+        """변환 패턴·한국어 용어 매핑의 replacement에서 LaTeX 명령어 이름을 모은다."""
+        commands: set[str] = set()
+        for source in (
+            (p.replacement for p in self.patterns),
+            self.korean_math_terms.values(),
+        ):
+            for replacement in source:
+                commands.update(re.findall(r"\\([a-zA-Z]+)", replacement))
+        return commands
+
+    def _space_glued_commands(self, text: str) -> str:
+        """`\\intf(x)`처럼 명령어에 문자 피연산자가 붙은 경우 공백을 삽입한다.
+
+        문자열 `\\<letters>`의 letters 전체가 알려진 명령어면 그대로 두고(`\\infty`),
+        아니면 가장 긴 알려진 명령어 prefix에서 잘라 공백을 넣는다(`\\intf`→`\\int f`).
+        일반 정규식으로는 `\\infty`가 `\\in`+`fty`로 잘못 쪼개지므로 명령어 집합을 직접 쓴다.
+        """
+
+        def split(match: re.Match[str]) -> str:
+            letters = match.group(1)
+            if letters in self._known_commands:
+                return match.group(0)
+            for i in range(len(letters) - 1, 0, -1):
+                if letters[:i] in self._known_commands:
+                    return f"\\{letters[:i]} {letters[i:]}"
+            return match.group(0)
+
+        return re.sub(r"\\([A-Za-z]+)", split, text)
 
     def _initialize_patterns(self) -> list[MathPattern]:
         """수학 표기법 변환 패턴 초기화."""
@@ -80,11 +116,20 @@ class MathPostProcessor:
                 pattern=r"∛\(([^)]+)\)",
                 replacement=r"\\sqrt[3]{\1}",
                 priority=5,
-                description="세제곱근",
+                description="괄호 세제곱근",
             ),
-            # 6. 분수 표기 (우선순위 6) - 수학적 컨텍스트만
             MathPattern(
-                pattern=r"(?<!\d{2,4}/)([a-zA-Z]+[a-zA-Z0-9()]*|[0-9]*[a-zA-Z]+[a-zA-Z0-9()]*)/([a-zA-Z]+[a-zA-Z0-9()]*|[0-9]*[a-zA-Z]+[a-zA-Z0-9()]*)(?!/\d{2,4})",
+                pattern=r"∛([a-zA-Z0-9]+)",
+                replacement=r"\\sqrt[3]{\1}",
+                priority=5,
+                description="단순 세제곱근",
+            ),
+            # 6. 분수 표기 (우선순위 6) - 괄호 그룹 또는 단순 피연산자
+            # NOTE: 이전 패턴은 가변 길이 lookbehind(`(?<!\d{2,4}/)`)를 써서 Python re가
+            # 컴파일 시 거부 → _convert_math_symbols가 re.error를 삼키고 패턴 자체를 건너뛰어
+            # 분수 변환이 전혀 동작하지 않았다. lookbehind 없이 피연산자를 명시한다.
+            MathPattern(
+                pattern=r"(\([^()]+\)|[A-Za-z0-9]+)\s*/\s*(\([^()]+\)|[A-Za-z0-9]+)",
                 replacement=r"\\frac{\1}{\2}",
                 priority=6,
                 description="분수 표기",
@@ -225,7 +270,7 @@ class MathPostProcessor:
         regions = []
 
         # 패턴 1: 명시적인 수학 기호가 포함된 영역
-        math_symbol_pattern = r"[∫∑∏√±×÷≤≥≠≈∞αβγδεθλμπρστφωΓΔΘΛΞΠΣΦΨΩ∂∇²³¹∈∉⊂⊆∪∩∅⃗]+"
+        math_symbol_pattern = r"[∫∬∭∑∏√∛±×÷≤≥≠≈≡∞αβγδεθλμπρστφωΓΔΘΛΞΠΣΦΨΩ∂∇²³¹∈∉⊂⊆∪∩∅⃗]+"
 
         for match in re.finditer(math_symbol_pattern, text):
             start, end = match.span()
@@ -240,9 +285,13 @@ class MathPostProcessor:
         # 패턴 2: 수학적 표현 패턴 (분수, 지수 등)
         equation_patterns = [
             r"[a-zA-Z0-9]+\^[a-zA-Z0-9]+",  # 지수
-            r"[a-zA-Z0-9]+/[a-zA-Z0-9]+",  # 분수
-            r"\\b(?:sin|cos|tan|log|ln)\\s*\\([^)]+\\)",  # 함수
-            r"\\blim\\s+[a-zA-Z0-9→∞]+",  # 극한
+            # 밑수(subscript): 단일 문자 변수(x_i, a_1)만 매칭 — user_id·total_count 같은
+            # 일반 식별자(다중 문자 base)를 잘못 변환하지 않도록 수식 컨텍스트로 제한.
+            r"\b[a-zA-Z]_[a-zA-Z0-9]+",  # 밑수(subscript)
+            # 분수(괄호 그룹 포함): `/` 주변 공백 허용 — 변환 패턴(\s*/\s*)과 정합.
+            r"(?:\([^()]+\)|[a-zA-Z0-9]+)\s*/\s*(?:\([^()]+\)|[a-zA-Z0-9]+)",  # 분수
+            r"\b(?:sin|cos|tan|log|ln)\s*\([^)]+\)",  # 함수
+            r"\blim\s+[a-zA-Z0-9→∞]+",  # 극한
         ]
 
         for pattern in equation_patterns:
@@ -285,7 +334,7 @@ class MathPostProcessor:
     def _find_math_boundary(self, text: str, pos: int, direction: int) -> int:
         """수학 표현식의 경계를 찾음."""
         math_chars = set(
-            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()[]{}+-*/=<>^_.,\\×÷≤≥≠≈∞±²³¹√∫∑∏αβγδεθλμπρστφωΓΔΘΛΞΠΣΦΨΩ∂∇∈∉⊂⊆∪∩∅⃗≡∬∭∛"
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()[]{}+-*/=<>^_.,\\×÷≤≥≠≈∞±²³¹√∫∑∏αβγδεθλμπρστφωΓΔΘΛΞΠΣΦΨΩ∂∇∈∉⊂⊆∪∩∅⃗≡∬∭∛→°"
         )
 
         current_pos = pos
@@ -380,6 +429,11 @@ class MathPostProcessor:
 
         # 5. 연속된 공백 정리
         cleaned = re.sub(r"\s+", " ", cleaned)
+
+        # 6. LaTeX 명령어가 피연산자에 바로 붙는 경우 공백 삽입
+        #    (예: `\int f(x)`, `\pm 5`, `\sum i`, `\partial x`, `\sigma ^{2}`)
+        cleaned = self._space_glued_commands(cleaned)  # 문자 피연산자
+        cleaned = self._command_operand_re.sub(r"\1 ", cleaned)  # 숫자·괄호·^·_
 
         return cleaned.strip()
 

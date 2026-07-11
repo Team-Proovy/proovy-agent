@@ -22,7 +22,7 @@ class TestOCROptions:
         options = OCROptions()
 
         assert options.primary_model == "flash"
-        assert options.fallback_model == "sonnet"
+        assert options.fallback_model == "gpt4o-mini"
         assert options.target_language == "auto"
         assert options.enable_math_mode is True
         assert options.enable_command_parsing is True
@@ -32,16 +32,16 @@ class TestOCROptions:
     def test_custom_options(self):
         """Test custom OCR options."""
         options = OCROptions(
-            primary_model="sonnet",
-            fallback_model="opus",
+            primary_model="gpt4o-mini",
+            fallback_model="flash",
             target_language="ko",
             enable_math_mode=False,
             quality_threshold=0.9,
             max_processing_time=60.0,
         )
 
-        assert options.primary_model == "sonnet"
-        assert options.fallback_model == "opus"
+        assert options.primary_model == "gpt4o-mini"
+        assert options.fallback_model == "flash"
         assert options.target_language == "ko"
         assert options.enable_math_mode is False
         assert options.quality_threshold == 0.9
@@ -51,8 +51,8 @@ class TestOCROptions:
         """Test VLM model name validation."""
         # Valid models
         OCROptions(primary_model="flash")
-        OCROptions(primary_model="sonnet")
-        OCROptions(fallback_model="opus")
+        OCROptions(primary_model="gpt4o-mini")
+        OCROptions(fallback_model="flash")
 
         # Invalid models
         with pytest.raises(ValidationError, match="지원하지 않는 모델"):
@@ -196,7 +196,7 @@ class TestOCRRequest:
     def test_custom_processing_options(self):
         """Test OCR request with custom options."""
         raw_input = {"type": "pdf", "pages": [1, 2, 3]}
-        options = OCROptions(primary_model="sonnet", enable_math_mode=False)
+        options = OCROptions(primary_model="gpt4o-mini", enable_math_mode=False)
 
         request = OCRRequest(
             raw_input=raw_input,
@@ -205,7 +205,7 @@ class TestOCRRequest:
             options=options,
         )
 
-        assert request.options.primary_model == "sonnet"
+        assert request.options.primary_model == "gpt4o-mini"
         assert request.options.enable_math_mode is False
 
     def test_empty_raw_input_validation(self):
