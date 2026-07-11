@@ -285,8 +285,11 @@ class MathPostProcessor:
         # 패턴 2: 수학적 표현 패턴 (분수, 지수 등)
         equation_patterns = [
             r"[a-zA-Z0-9]+\^[a-zA-Z0-9]+",  # 지수
-            r"[a-zA-Z0-9]+_[a-zA-Z0-9]+",  # 밑수(subscript)
-            r"(?:\([^()]+\)|[a-zA-Z0-9]+)/(?:\([^()]+\)|[a-zA-Z0-9]+)",  # 분수(괄호 그룹 포함)
+            # 밑수(subscript): 단일 문자 변수(x_i, a_1)만 매칭 — user_id·total_count 같은
+            # 일반 식별자(다중 문자 base)를 잘못 변환하지 않도록 수식 컨텍스트로 제한.
+            r"\b[a-zA-Z]_[a-zA-Z0-9]+",  # 밑수(subscript)
+            # 분수(괄호 그룹 포함): `/` 주변 공백 허용 — 변환 패턴(\s*/\s*)과 정합.
+            r"(?:\([^()]+\)|[a-zA-Z0-9]+)\s*/\s*(?:\([^()]+\)|[a-zA-Z0-9]+)",  # 분수
             r"\b(?:sin|cos|tan|log|ln)\s*\([^)]+\)",  # 함수
             r"\blim\s+[a-zA-Z0-9→∞]+",  # 극한
         ]
