@@ -90,7 +90,6 @@ class OCRNode:
 
                     # 문자열 입력 처리 (base64 또는 data URL)
                     if isinstance(image_value, str):
-
                         # data URL 형태인 경우 (data:image/png;base64,...)
                         if image_value.startswith("data:image/") and ";base64," in image_value:
                             try:
@@ -145,9 +144,7 @@ class OCRNode:
             "tags": original_tags,  # 기존 preprocessor 호환성 유지
         }
 
-    async def _process_full_pipeline(
-        self, image_data: bytes, request: OCRRequest
-    ) -> OCRResult:
+    async def _process_full_pipeline(self, image_data: bytes, request: OCRRequest) -> OCRResult:
         """전체 OCR 파이프라인 실행."""
         start_time = time.time()
 
@@ -181,7 +178,7 @@ class OCRNode:
             processing_time = time.time() - start_time
 
             # VLMResult에서 폴백 사용 여부 확인
-            fallback_used = hasattr(vlm_result, 'fallback_used') and vlm_result.fallback_used
+            fallback_used = hasattr(vlm_result, "fallback_used") and vlm_result.fallback_used
 
             metadata = ProcessingMetadata(
                 total_processing_time=processing_time,
@@ -218,12 +215,14 @@ class OCRNode:
                             original_text = candidate_command
                             break
 
-                command_tags.append(CommandTag(
-                    command=tag,
-                    original_text=original_text,
-                    confidence=command_result.confidence,
-                    position=0,
-                ))
+                command_tags.append(
+                    CommandTag(
+                        command=tag,
+                        original_text=original_text,
+                        confidence=command_result.confidence,
+                        position=0,
+                    )
+                )
 
             # @커맨드 제거된 텍스트로 통일성 유지
             # detected_patterns에서 실제 원문 커맨드 제거 (멀티워드 커맨드 지원)

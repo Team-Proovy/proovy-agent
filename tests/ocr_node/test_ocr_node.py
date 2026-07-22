@@ -110,6 +110,7 @@ class TestOCRNode:
         img_data = img_bytes.getvalue()
 
         from proovy_agent.graph.nodes.ocr_node.exceptions import ImageProcessingError
+
         with pytest.raises(ImageProcessingError):  # ImageProcessingError가 발생해야 함
             self.ocr_node._load_image(img_data)
 
@@ -132,7 +133,9 @@ class TestOCRNode:
         )
 
         command_tags = [
-            CommandTag(command="term:기각역", original_text="@용어 기각역", confidence=0.9, position=0),
+            CommandTag(
+                command="term:기각역", original_text="@용어 기각역", confidence=0.9, position=0
+            ),
             CommandTag(command="pdf", original_text="@해설지", confidence=0.8, position=10),
         ]
 
